@@ -1,6 +1,6 @@
 //! Fallback refine engine using keyword replacement.
 
-use crate::engine::refine_db::RefineDb;
+use crate::engine::debug_refine::DebugRefine;
 use log::info;
 
 pub struct FallbackRefineEngine {
@@ -12,7 +12,7 @@ impl FallbackRefineEngine {
         Self { remove_words }
     }
 
-    pub fn refine(&self, text: &str, db: &RefineDb) -> String {
+    pub fn refine(&self, text: &str, db: &DebugRefine) -> String {
         let mut result = text.to_string();
         for word in &self.remove_words {
             result = result.replace(word, "");

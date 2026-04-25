@@ -12,9 +12,12 @@ fn main() {
         }
     }
 
-    if cfg!(target_os = "windows") && Path::new("evi.ico").exists() {
-        let mut res = winres::WindowsResource::new();
-        res.set_icon("evi.ico");
-        res.compile().expect("winres compile failed");
+    #[cfg(target_os = "windows")]
+    {
+        if Path::new("evi.ico").exists() {
+            let mut res = winres::WindowsResource::new();
+            res.set_icon("evi.ico");
+            res.compile().expect("winres compile failed");
+        }
     }
 }

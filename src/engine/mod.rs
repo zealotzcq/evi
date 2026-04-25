@@ -6,10 +6,10 @@ pub mod features;
 pub mod llm;
 pub mod paraformer;
 pub mod punc;
-pub mod refine_db;
+pub mod debug_refine;
 pub mod segmenter;
 pub mod vad;
 
 pub use correction::FileCorrectionStore;
 pub use fallback::FallbackRefineEngine;
-pub use refine_db::RefineDb;
+pub use debug_refine::DebugRefine;

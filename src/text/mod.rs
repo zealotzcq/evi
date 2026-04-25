@@ -3,6 +3,9 @@
 #[cfg(target_os = "windows")]
 pub mod tsf;
 
+#[cfg(target_os = "macos")]
+pub mod macos;
+
 use crate::{TextChangeEvent, TextObserver, TextOutput, TextSnapshot};
 use anyhow::Result;
 
