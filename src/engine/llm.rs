@@ -3,7 +3,7 @@
 //! Loads the Qwen ONNX model and performs autoregressive generation with KV-cache
 //! for text refinement (removing filler words, adding punctuation, fixing typos).
 
-use crate::engine::refine_db::RefineDb;
+use crate::engine::debug_refine::DebugRefine;
 use crate::TokenScore;
 use anyhow::{bail, Context, Result};
 use log::{debug, info, warn};
@@ -575,7 +575,7 @@ impl LlmEngine {
         })
     }
 
-    pub fn refine(&self, text: &str, db: &RefineDb) -> Result<(String, Vec<TokenScore>)> {
+    pub fn refine(&self, text: &str, db: &DebugRefine) -> Result<(String, Vec<TokenScore>)> {
         let text = text.trim();
         if text.is_empty() {
             return Ok((text.to_string(), vec![]));

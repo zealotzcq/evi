@@ -21,15 +21,38 @@ impl log::Log for CaptureLogger {
             eprintln!("{}", msg);
             if let Some(buf) = LOG_BUFFER.lock().as_ref() {
                 let mut v = buf.lock();
-                v.push(msg);
+                v.push(msg.clone());
                 if v.len() > 5000 {
                     v.drain(..1000);
                 }
             }
+            write_log_file(&msg);
         }
     }
 
     fn flush(&self) {}
+}
+
+fn log_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::new());
+    if home.is_empty() {
+        std::path::PathBuf::from("/tmp/.evi.log")
+    } else {
+        std::path::Path::new(&home).join(".evi.log")
+    }
+}
+
+fn write_log_file(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(log_path())
+    {
+        let _ = writeln!(f, "{}", msg);
+        let _ = f.flush();
+    }
 }
 
 fn ts_now() -> String {
