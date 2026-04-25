@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+#[cfg(not(target_os = "macos"))]
 use std::time::Duration;
 use vi::audio::cpal_source::CpalAudioSource;
 use vi::engine::correction::FileCorrectionStore;
@@ -29,11 +30,15 @@ use vi::engine::refine_db::RefineDb;
 use vi::engine::segmenter::segment_audio;
 use vi::engine::vad::VadEngine;
 use vi::ui::log_capture::CaptureLogger;
+#[cfg(not(target_os = "macos"))]
 use vi::ui::PromptState;
 use vi::*;
 
 #[cfg(target_os = "windows")]
 use vi::overlay::Overlay;
+
+#[cfg(target_os = "macos")]
+use vi::ui::macos_tray::MacTray;
 
 fn log_event(event: &str, detail: &str) {
     let now = std::time::SystemTime::now()
@@ -160,38 +165,45 @@ impl Session {
         let audio_source: Box<dyn AudioSource> =
             Box::new(CpalAudioSource::new(DEFAULT_SAMPLE_RATE)?);
         let correction = FileCorrectionStore::new("corrections")?;
-        use vi::text::PlatformTextSession;
-        struct SOut;
-        impl TextOutput for SOut {
-            fn commit_text(&self, t: &str) -> Result<()> {
-                print!("{}", t);
-                Ok(())
+
+        #[cfg(target_os = "macos")]
+        let text_session = vi::text::macos::create_platform_session()?;
+
+        #[cfg(not(target_os = "macos"))]
+        let text_session = {
+            use vi::text::PlatformTextSession;
+            struct SOut;
+            impl TextOutput for SOut {
+                fn commit_text(&self, t: &str) -> Result<()> {
+                    print!("{}", t);
+                    Ok(())
+                }
+                fn method_name(&self) -> &str {
+                    "stdio"
+                }
             }
-            fn method_name(&self) -> &str {
-                "stdio"
+            struct SObs;
+            impl TextObserver for SObs {
+                fn start_monitoring(&mut self) -> Result<()> {
+                    Ok(())
+                }
+                fn stop_monitoring(&mut self) -> Result<()> {
+                    Ok(())
+                }
+                fn poll_changes(&self) -> Vec<TextChangeEvent> {
+                    Vec::new()
+                }
+                fn snapshot(&self) -> Result<TextSnapshot> {
+                    Ok(TextSnapshot {
+                        full_text: String::new(),
+                        cursor_position: 0,
+                        selection_start: 0,
+                        selection_end: 0,
+                    })
+                }
             }
-        }
-        struct SObs;
-        impl TextObserver for SObs {
-            fn start_monitoring(&mut self) -> Result<()> {
-                Ok(())
-            }
-            fn stop_monitoring(&mut self) -> Result<()> {
-                Ok(())
-            }
-            fn poll_changes(&self) -> Vec<TextChangeEvent> {
-                Vec::new()
-            }
-            fn snapshot(&self) -> Result<TextSnapshot> {
-                Ok(TextSnapshot {
-                    full_text: String::new(),
-                    cursor_position: 0,
-                    selection_start: 0,
-                    selection_end: 0,
-                })
-            }
-        }
-        let text_session = PlatformTextSession::new(Box::new(SOut), Box::new(SObs));
+            PlatformTextSession::new(Box::new(SOut), Box::new(SObs))
+        };
 
         Ok(Self {
             audio_source: Mutex::new(audio_source),
@@ -713,7 +725,273 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn request_all_permissions() -> Result<()> {
+    use std::ffi::c_void;
+    use std::ptr;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+        static kAXTrustedCheckOptionPrompt: *const c_void;
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightListenEventAccess() -> bool;
+        fn CGRequestListenEventAccess() -> bool;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFDictionaryCreate(
+            allocator: *const c_void,
+            keys: *const *const c_void,
+            values: *const *const c_void,
+            num_values: i64,
+            key_callbacks: *const c_void,
+            value_callbacks: *const c_void,
+        ) -> *const c_void;
+        static kCFTypeDictionaryKeyCallBacks: *const c_void;
+        static kCFTypeDictionaryValueCallBacks: *const c_void;
+        static kCFBooleanTrue: *const c_void;
+    }
+
+    let mut need_exit = false;
+
+    // 1. Accessibility
+    let ax_trusted = unsafe { AXIsProcessTrustedWithOptions(ptr::null()) };
+    if !ax_trusted {
+        eprintln!("需要「辅助功能」权限，正在请求...");
+        unsafe {
+            let key = kAXTrustedCheckOptionPrompt;
+            let value = kCFBooleanTrue;
+            let dict = CFDictionaryCreate(
+                ptr::null(), &key, &value, 1,
+                kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
+            );
+            AXIsProcessTrustedWithOptions(dict);
+        }
+        need_exit = true;
+    }
+
+    // 2. Input Monitoring
+    let listen_ok = unsafe { CGPreflightListenEventAccess() };
+    if !listen_ok {
+        eprintln!("需要「输入监控」权限，正在请求...");
+        unsafe { CGRequestListenEventAccess(); }
+        need_exit = true;
+    }
+
+    if need_exit {
+        eprintln!("\n请在「系统设置 > 隐私与安全性」中启用以下权限：");
+        if !ax_trusted { eprintln!("  - 辅助功能"); }
+        if !listen_ok { eprintln!("  - 输入监控"); }
+        eprintln!("  - 麦克风（首次录音时系统会自动弹出）");
+        eprintln!("\n授权后请重新启动应用。");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+mod cg_key {
+    use super::MacEvent;
+    use core_graphics::event::{
+        CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType, EventField,
+        CGEventFlags,
+    };
+    use parking_lot::Mutex;
+    use std::cell::Cell;
+    use std::sync::Arc;
+
+    const KVK_RIGHT_COMMAND: i64 = 0x36;
+
+    pub fn start(proxy: Arc<Mutex<Option<tao::event_loop::EventLoopProxy<MacEvent>>>>) {
+        let events = vec![CGEventType::FlagsChanged];
+        let prev_down = Cell::new(false);
+
+        let tap = core_graphics::event::CGEventTap::new(
+            CGEventTapLocation::HID,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::ListenOnly,
+            events,
+            move |_proxy, _event_type, event| {
+                let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+                let flags = event.get_flags();
+                log::debug!("CGEvent: keycode={}, flags={:?}", keycode, flags);
+                if keycode != KVK_RIGHT_COMMAND {
+                    return None;
+                }
+                let now_down = event.get_flags().contains(CGEventFlags::CGEventFlagCommand);
+                let was_down = prev_down.replace(now_down);
+                if now_down != was_down {
+                    if let Some(ref p) = *proxy.lock() {
+                        if now_down {
+                            let _ = p.send_event(MacEvent::KeyDown);
+                        } else {
+                            let _ = p.send_event(MacEvent::KeyUp);
+                        }
+                    }
+                }
+                None
+            },
+        );
+
+        match tap {
+            Ok(t) => {
+                t.enable();
+                if let Ok(source) = t.mach_port.create_runloop_source(0) {
+                    let rl = core_foundation::runloop::CFRunLoop::get_current();
+                    unsafe {
+                        rl.add_source(&source, core_foundation::runloop::kCFRunLoopCommonModes);
+                    }
+                }
+                std::mem::forget(t);
+                log::info!("CGEventTap created, listening for Right Command...");
+                core_foundation::runloop::CFRunLoop::run_current();
+            }
+            Err(_) => {
+                log::error!("CGEventTap failed. Grant Accessibility + Input Monitoring in System Settings.");
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
+enum MacEvent {
+    KeyDown,
+    KeyUp,
+    ProcessingDone,
+    Quit,
+}
+
+#[cfg(target_os = "macos")]
+fn main() -> Result<()> {
+    request_all_permissions()?;
+
+    {
+        let exe_dir = Config::exe_dir()?;
+        let dylib_path = exe_dir.join("ort-dylib/onnxruntime-osx-x86_64-1.24.2/lib/libonnxruntime.1.24.2.dylib");
+        if !dylib_path.exists() {
+            anyhow::bail!("ORT dylib not found at {}", dylib_path.display());
+        }
+        if !ort::init_from(dylib_path)?.commit() {
+            anyhow::bail!("Failed to initialize ONNX Runtime");
+        }
+    }
+
+    use tao::event::{Event, StartCause};
+    use tao::event_loop::{ControlFlow, EventLoopBuilder};
+    use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+    use tray_icon::menu::{MenuEvent, MenuItem};
+    use tray_icon::TrayIconEvent;
+
+    let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    vi::ui::log_capture::init_log_capture(log_buffer.clone());
+
+    log::set_boxed_logger(Box::new(CaptureLogger))
+        .map(|()| log::set_max_level(log::LevelFilter::Info))
+        .unwrap();
+
+    info!("EVI Voice Input Method starting (macOS)...");
+
+    let cfg = Config::load()?;
+
+    info!("Loading models...");
+    let session = Arc::new(Session::new(&cfg)?);
+    info!("All models loaded.");
+
+    let mut event_loop = EventLoopBuilder::<MacEvent>::with_user_event()
+        .build();
+    event_loop.set_activation_policy(ActivationPolicy::Accessory);
+    let proxy = event_loop.create_proxy();
+
+    let quit_item = MenuItem::new("退出", true, None);
+    let quit_id = quit_item.id().clone();
+
+    let menu_proxy = proxy.clone();
+    MenuEvent::set_event_handler(Some(move |event: tray_icon::menu::MenuEvent| {
+        if event.id == quit_id {
+            let _ = menu_proxy.send_event(MacEvent::Quit);
+        }
+    }));
+
+    TrayIconEvent::set_event_handler(Some(move |_event| {}));
+
+    let _tray = MacTray::new(quit_item)
+        .map_err(|e| anyhow::anyhow!("Failed to create tray: {}", e))?;
+
+    let cg_proxy: Arc<Mutex<Option<tao::event_loop::EventLoopProxy<MacEvent>>>> =
+        Arc::new(Mutex::new(Some(proxy.clone())));
+
+    std::thread::Builder::new()
+        .name("cg-event-tap".into())
+        .spawn(move || {
+            cg_key::start(cg_proxy);
+        })
+        .expect("Failed to spawn key listener thread");
+
+    let mut recording = false;
+    let mut processing = false;
+
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match event {
+            Event::NewEvents(StartCause::Init) => {
+                info!("EVI 输入法已上线! 按住右Command键录音，松开识别。");
+            }
+
+            Event::UserEvent(MacEvent::KeyDown) => {
+                if !recording && !processing {
+                    recording = true;
+                    info!("Starting recording (Right Command)...");
+                    session.start_recording();
+                }
+            }
+
+            Event::UserEvent(MacEvent::KeyUp) => {
+                if recording && !processing {
+                    recording = false;
+                    processing = true;
+                    info!("Stopping recording (Right Command)...");
+                    let sess = session.clone();
+                    let done_proxy = proxy.clone();
+                    std::thread::Builder::new()
+                        .name("asr-process".into())
+                        .spawn(move || {
+                            sess.stop_recording_and_process();
+                            let _ = done_proxy.send_event(MacEvent::ProcessingDone);
+                        })
+                        .expect("Failed to spawn ASR thread");
+                }
+            }
+
+            Event::UserEvent(MacEvent::ProcessingDone) => {
+                processing = false;
+            }
+
+            Event::UserEvent(MacEvent::Quit) => {
+                info!("Shutting down...");
+                if session.recording.load(Ordering::SeqCst) {
+                    session.audio_source.lock().stop().ok();
+                }
+                session.check_corrections();
+                *control_flow = ControlFlow::Exit;
+            }
+
+            _ => {}
+        }
+    });
+
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn main() -> Result<()> {
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     vi::ui::log_capture::init_log_capture(log_buffer.clone());

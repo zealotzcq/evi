@@ -2,6 +2,9 @@ pub mod log_capture;
 #[cfg(target_os = "windows")]
 pub mod win32;
 
+#[cfg(target_os = "macos")]
+pub mod macos_tray;
+
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::path::Path;

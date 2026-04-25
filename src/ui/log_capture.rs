@@ -18,6 +18,7 @@ impl log::Log for CaptureLogger {
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
             let msg = format!("{} [{}] {}", ts_now(), record.level(), record.args());
+            eprintln!("{}", msg);
             if let Some(buf) = LOG_BUFFER.lock().as_ref() {
                 let mut v = buf.lock();
                 v.push(msg);

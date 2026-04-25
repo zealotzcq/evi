@@ -214,6 +214,8 @@ fn resolve_path(base: &Path, path: &str) -> PathBuf {
 
 #[derive(Deserialize, Clone)]
 pub struct Config {
+    #[serde(default)]
+    pub model_base_dir: Option<String>,
     pub vad_model_dir: String,
     pub asr_model_dir: String,
     pub punc_model_dir: String,
@@ -268,19 +270,31 @@ impl Config {
             .with_context(|| format!("Failed to read {}", config_path.display()))?;
         let mut cfg: Config = serde_json::from_str(&raw)
             .with_context(|| format!("Failed to parse {}", config_path.display()))?;
-        cfg.vad_model_dir = resolve_path(&exe_dir, &cfg.vad_model_dir)
+
+        let base_dir: PathBuf = if let Some(ref base) = cfg.model_base_dir {
+            let p = PathBuf::from(base);
+            if p.is_absolute() {
+                p
+            } else {
+                exe_dir.join(&p)
+            }
+        } else {
+            exe_dir.clone()
+        };
+
+        cfg.vad_model_dir = resolve_path(&base_dir, &cfg.vad_model_dir)
             .to_str()
             .unwrap()
             .to_string();
-        cfg.asr_model_dir = resolve_path(&exe_dir, &cfg.asr_model_dir)
+        cfg.asr_model_dir = resolve_path(&base_dir, &cfg.asr_model_dir)
             .to_str()
             .unwrap()
             .to_string();
-        cfg.punc_model_dir = resolve_path(&exe_dir, &cfg.punc_model_dir)
+        cfg.punc_model_dir = resolve_path(&base_dir, &cfg.punc_model_dir)
             .to_str()
             .unwrap()
             .to_string();
-        cfg.llm_model_dir = resolve_path(&exe_dir, &cfg.llm_model_dir)
+        cfg.llm_model_dir = resolve_path(&base_dir, &cfg.llm_model_dir)
             .to_str()
             .unwrap()
             .to_string();
