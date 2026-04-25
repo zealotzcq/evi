@@ -157,7 +157,6 @@ impl Session {
         } else {
             RefineEngine::Fallback(FallbackRefineEngine::new(cfg.refine_fallback.clone()))
         };
-        let refine = RefineEngine::Fallback(FallbackRefineEngine::new(cfg.refine_fallback.clone()));
 
         if cfg.save_log {
             let log_dir = PathBuf::from("log");
