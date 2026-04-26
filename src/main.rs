@@ -22,17 +22,18 @@ use std::sync::Arc;
 use std::time::Duration;
 use vi::audio::cpal_source::CpalAudioSource;
 use vi::engine::correction::FileCorrectionStore;
+use vi::engine::coze_refine::coze_refine_with_fallback;
+use vi::engine::debug_refine::DebugRefine;
 use vi::engine::fallback::FallbackRefineEngine;
+use vi::engine::llm::LlmEngine;
 use vi::engine::paraformer::AsrEngine;
 use vi::engine::punc::PuncEngine;
-use vi::engine::debug_refine::DebugRefine;
-use vi::TokenScore;
-use vi::engine::llm::LlmEngine;
 use vi::engine::segmenter::segment_audio;
 use vi::engine::vad::VadEngine;
 use vi::ui::log_capture::CaptureLogger;
 #[cfg(not(target_os = "macos"))]
 use vi::ui::PromptState;
+use vi::TokenScore;
 use vi::*;
 
 #[cfg(target_os = "windows")]
@@ -68,7 +69,7 @@ struct Session {
     vad: Mutex<VadEngine>,
     asr: Mutex<AsrEngine>,
     punc: Mutex<PuncEngine>,
-    db: Mutex<DebugRefine>,
+    dr: Mutex<DebugRefine>,
     refine: RefineEngine,
     correction: FileCorrectionStore,
     recording: AtomicBool,
@@ -78,6 +79,8 @@ struct Session {
     audio_seq: AtomicU64,
     save_log: bool,
     trailing_punct: String,
+    coze_refine_timeout: u64,
+    max_refine_ratio: f64,
 }
 
 enum RefineEngine {
@@ -88,20 +91,19 @@ enum RefineEngine {
 impl Session {
     #[cfg(target_os = "windows")]
     fn new(cfg: &Config) -> Result<Self> {
-        let vad_dir = PathBuf::from(&cfg.vad_model_dir);
-        let asr_dir = PathBuf::from(&cfg.asr_model_dir);
-        let punc_dir = PathBuf::from(&cfg.punc_model_dir);
+        let base = crate::models::base_dir(cfg);
+        let vad_dir = crate::models::vad_model_dir(&base);
+        let asr_dir = crate::models::asr_model_dir(&base);
+        let punc_dir = crate::models::punc_model_dir(&base);
 
         debug!("Loading VAD model from {}...", vad_dir.display());
         let vad = VadEngine::new(&vad_dir)?;
-
         debug!("Loading ASR model from {}...", asr_dir.display());
         let asr = AsrEngine::new(&asr_dir)?;
-
         debug!("Loading Punc model from {}...", punc_dir.display());
         let punc = PuncEngine::new(&punc_dir)?;
 
-        let db = DebugRefine::open(&cfg.refine_db_path)?;
+        let db = DebugRefine::open(crate::models::refine_db_path().to_str().unwrap())?;
         let refine = if cfg.llm_refine {
             debug!("Loading LLM model...");
             let engine = LlmEngine::new(cfg)?;
@@ -127,7 +129,7 @@ impl Session {
             vad: Mutex::new(vad),
             asr: Mutex::new(asr),
             punc: Mutex::new(punc),
-            db: Mutex::new(db),
+            dr: Mutex::new(db),
             refine,
             correction,
             recording: AtomicBool::new(false),
@@ -136,29 +138,35 @@ impl Session {
             audio_seq: AtomicU64::new(1),
             save_log: cfg.save_log,
             trailing_punct: cfg.trailing_punct.clone(),
+            coze_refine_timeout: cfg.coze_refine_timeout,
+            max_refine_ratio: cfg.max_refine_ratio,
         })
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn new(cfg: &Config) -> Result<Self> {
-        let vad_dir = PathBuf::from(&cfg.vad_model_dir);
-        let asr_dir = PathBuf::from(&cfg.asr_model_dir);
+    fn new(_cfg: &Config) -> Result<Self> {
+        let base = crate::models::base_dir(_cfg);
+        let vad_dir = crate::models::vad_model_dir(&base);
+        let asr_dir = crate::models::asr_model_dir(&base);
+        let punc_dir = crate::models::punc_model_dir(&base);
 
         debug!("Loading VAD model from {}...", vad_dir.display());
         let vad = VadEngine::new(&vad_dir)?;
         debug!("Loading ASR model from {}...", asr_dir.display());
         let asr = AsrEngine::new(&asr_dir)?;
+        debug!("Loading Punc model from {}...", punc_dir.display());
+        let punc = PuncEngine::new(&punc_dir)?;
 
-        let db = DebugRefine::open(&cfg.refine_db_path)?;
-        let refine = if cfg.llm_refine {
+        let db = DebugRefine::open(crate::models::refine_db_path().to_str().unwrap())?;
+        let refine = if _cfg.llm_refine {
             debug!("Loading LLM model...");
-            let engine = LlmEngine::new(cfg)?;
+            let engine = LlmEngine::new(_cfg)?;
             RefineEngine::Llm(Box::new(Mutex::new(engine)))
         } else {
-            RefineEngine::Fallback(FallbackRefineEngine::new(cfg.refine_fallback.clone()))
+            RefineEngine::Fallback(FallbackRefineEngine::new(_cfg.refine_fallback.clone()))
         };
 
-        if cfg.save_log {
+        if _cfg.save_log {
             let log_dir = PathBuf::from("log");
             std::fs::create_dir_all(&log_dir).ok();
         }
@@ -211,8 +219,8 @@ impl Session {
             text_session: Mutex::new(text_session),
             vad: Mutex::new(vad),
             asr: Mutex::new(asr),
-            punc: Mutex::new(PuncEngine::new(&PathBuf::from(&cfg.punc_model_dir))?),
-            db: Mutex::new(db),
+            punc: Mutex::new(punc),
+            dr: Mutex::new(db),
             refine,
             correction,
             recording: AtomicBool::new(false),
@@ -220,6 +228,8 @@ impl Session {
             audio_seq: AtomicU64::new(1),
             save_log: cfg.save_log,
             trailing_punct: cfg.trailing_punct.clone(),
+            coze_refine_timeout: cfg.coze_refine_timeout,
+            max_refine_ratio: cfg.max_refine_ratio,
         })
     }
 
@@ -329,28 +339,42 @@ impl Session {
         #[cfg(target_os = "windows")]
         self.overlay.show();
 
-        let (refined_text, llm_tokens) = match &self.refine {
-            RefineEngine::Llm(engine) => {
-                let db = self.db.lock();
-                match engine.lock().refine(&full_text, &db) {
-                    Ok((refined, tokens)) => {
-                        debug!("LLM refined: '{}' -> '{}'", full_text, refined);
-                        log_event("LLM_REFINED", &format!("{} | {}", full_text, refined));
-                        (refined, tokens)
-                    }
-                    Err(e) => {
-                        warn!("LLM refinement failed: {e}, using raw ASR output");
-                        (full_text, vec![])
-                    }
-                }
+        let (refined_text, llm_tokens) = if vi::ui::get_coze_refine_enabled() {
+            let refined = coze_refine_with_fallback(
+                &full_text,
+                self.max_refine_ratio,
+                self.coze_refine_timeout,
+            );
+            if refined != full_text {
+                let dr = self.dr.lock();
+                dr.log_refine(&full_text, &refined);
+                log_event("COZE_REFINED", &format!("{} | {}", full_text, refined));
             }
-            RefineEngine::Fallback(engine) => {
-                let db = self.db.lock();
-                let filtered = engine.refine(&full_text, &db);
-                if filtered != full_text {
-                    log_event("FALLBACK_FILTER", &format!("{} | {}", full_text, filtered));
+            (refined, Vec::<TokenScore>::new())
+        } else {
+            match &self.refine {
+                RefineEngine::Llm(engine) => {
+                    let dr = self.dr.lock();
+                    match engine.lock().refine(&full_text, &dr) {
+                        Ok((refined, tokens)) => {
+                            debug!("LLM refined: '{}' -> '{}'", full_text, refined);
+                            log_event("LLM_REFINED", &format!("{} | {}", full_text, refined));
+                            (refined, tokens)
+                        }
+                        Err(e) => {
+                            warn!("LLM refinement failed: {e}, using raw ASR output");
+                            (full_text, vec![])
+                        }
+                    }
                 }
-                (filtered, Vec::<TokenScore>::new())
+                RefineEngine::Fallback(engine) => {
+                    let dr = self.dr.lock();
+                    let filtered = engine.refine(&full_text, &dr);
+                    if filtered != full_text {
+                        log_event("FALLBACK_FILTER", &format!("{} | {}", full_text, filtered));
+                    }
+                    (filtered, Vec::<TokenScore>::new())
+                }
             }
         };
 
@@ -550,6 +574,8 @@ fn main() -> Result<()> {
         .unwrap();
 
     info!("EVI Voice Input Method starting...");
+
+    vi::secret::load_key();
 
     {
         use windows::core::PCWSTR;
@@ -768,8 +794,12 @@ fn request_all_permissions() -> Result<()> {
             let key = kAXTrustedCheckOptionPrompt;
             let value = kCFBooleanTrue;
             let dict = CFDictionaryCreate(
-                ptr::null(), &key, &value, 1,
-                kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
+                ptr::null(),
+                &key,
+                &value,
+                1,
+                kCFTypeDictionaryKeyCallBacks,
+                kCFTypeDictionaryValueCallBacks,
             );
             AXIsProcessTrustedWithOptions(dict);
         }
@@ -780,14 +810,20 @@ fn request_all_permissions() -> Result<()> {
     let listen_ok = unsafe { CGPreflightListenEventAccess() };
     if !listen_ok {
         eprintln!("需要「输入监控」权限，正在请求...");
-        unsafe { CGRequestListenEventAccess(); }
+        unsafe {
+            CGRequestListenEventAccess();
+        }
         need_exit = true;
     }
 
     if need_exit {
         eprintln!("\n请在「系统设置 > 隐私与安全性」中启用以下权限：");
-        if !ax_trusted { eprintln!("  - 辅助功能"); }
-        if !listen_ok { eprintln!("  - 输入监控"); }
+        if !ax_trusted {
+            eprintln!("  - 辅助功能");
+        }
+        if !listen_ok {
+            eprintln!("  - 输入监控");
+        }
         eprintln!("  - 麦克风（首次录音时系统会自动弹出）");
         eprintln!("\n授权后请重新启动应用。");
         std::process::exit(1);
@@ -800,8 +836,8 @@ fn request_all_permissions() -> Result<()> {
 mod cg_key {
     use super::MacEvent;
     use core_graphics::event::{
-        CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType, EventField,
-        CGEventFlags,
+        CGEventFlags, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+        EventField,
     };
     use parking_lot::Mutex;
     use std::cell::Cell;
@@ -854,7 +890,9 @@ mod cg_key {
                 core_foundation::runloop::CFRunLoop::run_current();
             }
             Err(_) => {
-                log::error!("CGEventTap failed. Grant Accessibility + Input Monitoring in System Settings.");
+                log::error!(
+                    "CGEventTap failed. Grant Accessibility + Input Monitoring in System Settings."
+                );
             }
         }
     }
@@ -875,7 +913,8 @@ fn main() -> Result<()> {
 
     {
         let exe_dir = Config::exe_dir()?;
-        let dylib_path = exe_dir.join("ort-dylib/onnxruntime-osx-x86_64-1.24.2/lib/libonnxruntime.1.24.2.dylib");
+        let dylib_path =
+            exe_dir.join("ort-dylib/onnxruntime-osx-x86_64-1.24.2/lib/libonnxruntime.1.24.2.dylib");
         if !dylib_path.exists() {
             anyhow::bail!("ORT dylib not found at {}", dylib_path.display());
         }
@@ -905,24 +944,32 @@ fn main() -> Result<()> {
     let session = Arc::new(Session::new(&cfg)?);
     info!("All models loaded.");
 
-    let mut event_loop = EventLoopBuilder::<MacEvent>::with_user_event()
-        .build();
+    let mut event_loop = EventLoopBuilder::<MacEvent>::with_user_event().build();
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
     let proxy = event_loop.create_proxy();
 
     let quit_item = MenuItem::new("退出", true, None);
     let quit_id = quit_item.id().clone();
+    let coze_refine_item = MenuItem::new("网络大模型润色", false, None);
+    let coze_id = coze_refine_item.id().clone();
 
     let menu_proxy = proxy.clone();
     MenuEvent::set_event_handler(Some(move |event: tray_icon::menu::MenuEvent| {
         if event.id == quit_id {
             let _ = menu_proxy.send_event(MacEvent::Quit);
+        } else if event.id == coze_id {
+            let current = vi::ui::get_coze_refine_enabled();
+            if !current && vi::secret::get_api_key().is_none() {
+                vi::ui::api_key_dialog::request_api_key_dialog();
+            } else {
+                vi::ui::set_coze_refine(!current);
+            }
         }
     }));
 
     TrayIconEvent::set_event_handler(Some(move |_event| {}));
 
-    let _tray = MacTray::new(quit_item)
+    let _tray = MacTray::new(quit_item, coze_refine_item)
         .map_err(|e| anyhow::anyhow!("Failed to create tray: {}", e))?;
 
     let cg_proxy: Arc<Mutex<Option<tao::event_loop::EventLoopProxy<MacEvent>>>> =
@@ -1022,7 +1069,10 @@ fn main() -> Result<()> {
                 let state = prompt_state_hook.lock().take();
                 if let Some(ps) = state {
                     if let RefineEngine::Llm(engine) = &session_hook.refine {
-                        match engine.lock().rebuild_prompt(&ps.system_prompt, &ps.prefill_template) {
+                        match engine
+                            .lock()
+                            .rebuild_prompt(&ps.system_prompt, &ps.prefill_template)
+                        {
                             Ok(()) => info!("LLM prompt rebuilt successfully"),
                             Err(e) => error!("LLM prompt rebuild failed: {}", e),
                         }

@@ -28,6 +28,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 eframe = "0.31"
 egui = "0.31"
 image = "0.25"
+ureq = "3.3.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }

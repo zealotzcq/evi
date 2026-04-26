@@ -1,3 +1,4 @@
+pub mod api_key_dialog;
 pub mod log_capture;
 #[cfg(target_os = "windows")]
 pub mod win32;
@@ -5,12 +6,12 @@ pub mod win32;
 #[cfg(target_os = "macos")]
 pub mod macos_tray;
 
+use egui::ViewportCommand;
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use egui::ViewportCommand;
 
 #[cfg(target_os = "windows")]
 pub static HOOK_CHANNEL: parking_lot::Mutex<Option<crossbeam_channel::Sender<bool>>> =
@@ -19,6 +20,16 @@ pub static HOOK_CHANNEL: parking_lot::Mutex<Option<crossbeam_channel::Sender<boo
 #[cfg(not(target_os = "windows"))]
 pub static HOOK_CHANNEL: std::sync::Mutex<Option<crossbeam_channel::Sender<bool>>> =
     std::sync::Mutex::new(None);
+
+pub static USE_COZE_REFINE: AtomicBool = AtomicBool::new(false);
+
+pub fn get_coze_refine_enabled() -> bool {
+    USE_COZE_REFINE.load(Ordering::SeqCst)
+}
+
+pub fn set_coze_refine(enabled: bool) {
+    USE_COZE_REFINE.store(enabled, Ordering::SeqCst);
+}
 
 pub struct Scheme {
     pub name: String,
@@ -208,10 +219,10 @@ impl eframe::App for ViApp {
         }
 
         if self.first_frame {
-            self.first_frame = false;            
+            self.first_frame = false;
             self.trigger_rebuild();
         }
-        
+
         egui::CentralPanel::default().show(ctx, |ui| {
             let avail = ui.available_height();
             let log_h = (avail * 0.33).max(100.0);
@@ -344,7 +355,6 @@ impl eframe::App for ViApp {
             ctx.send_viewport_cmd(ViewportCommand::Visible(false)); // 隐藏窗口
             ctx.send_viewport_cmd(ViewportCommand::Minimized(true)); // 最小化窗口
         }
-        
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

@@ -22,8 +22,9 @@
 
 pub mod audio;
 pub mod engine;
-#[cfg(target_os = "windows")]
+pub mod models;
 pub mod overlay;
+pub mod secret;
 pub mod text;
 pub mod ui;
 
@@ -32,7 +33,7 @@ use crossbeam_channel::Receiver;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Audio
@@ -203,63 +204,51 @@ fn get_exe_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn resolve_path(base: &Path, path: &str) -> PathBuf {
-    let p = expand_home(path);
-    if p.is_absolute() {
-        p
-    } else {
-        base.join(p)
-    }
-}
-
-fn expand_home(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(path.replacen("~", &home, 1));
-        }
-    }
-    PathBuf::from(path)
-}
-
 #[derive(Deserialize, Clone)]
 pub struct Config {
     #[serde(default)]
     pub model_base_dir: Option<String>,
-    pub vad_model_dir: String,
-    pub asr_model_dir: String,
-    pub punc_model_dir: String,
-    pub llm_model_dir: String,
-    #[serde(default = "default_true")]
+    #[serde(default)]
+    pub vad_model_dir: Option<String>,
+    #[serde(default)]
+    pub asr_model_dir: Option<String>,
+    #[serde(default)]
+    pub punc_model_dir: Option<String>,
+    #[serde(default)]
+    pub llm_model_dir: Option<String>,
+    #[serde(default = "default_false")]
     pub llm_refine: bool,
     #[serde(default = "default_refine_fallback")]
     pub refine_fallback: Vec<String>,
     #[serde(default = "default_min_refine_length")]
     pub min_refine_length: usize,
-    #[serde(default = "default_refine_db_path")]
-    pub refine_db_path: String,
+    #[serde(default)]
+    pub refine_db_path: Option<String>,
     #[serde(default = "default_max_refine_ratio")]
     pub max_refine_ratio: f64,
-    #[serde(default)]
+    #[serde(default= "default_false")]
     pub save_log: bool,
-    #[serde(default)]
+    #[serde(default= "default_false")]
     pub debug: bool,
     #[serde(default = "default_active_scheme")]
     pub active_scheme: Option<String>,
     #[serde(default = "default_trailing_punct")]
     pub trailing_punct: String,
+    #[serde(default = "default_coze_refine_timeout")]
+    pub coze_refine_timeout: u64,
 }
 
-fn default_true() -> bool {
-    true
+// fn default_true() -> bool {
+//     true
+// }
+fn default_false() -> bool {
+    false
 }
 fn default_refine_fallback() -> Vec<String> {
     vec!["嗯".to_string(), "呃".to_string()]
 }
 fn default_min_refine_length() -> usize {
     5
-}
-fn default_refine_db_path() -> String {
-    "refine_log.db".to_string()
 }
 fn default_max_refine_ratio() -> f64 {
     1.2
@@ -270,45 +259,38 @@ fn default_active_scheme() -> Option<String> {
 fn default_trailing_punct() -> String {
     ",".to_string()
 }
+fn default_coze_refine_timeout() -> u64 {
+    5
+}
 
 impl Config {
+    fn home_config_path() -> PathBuf {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home).join(".evi_config.json")
+    }
+
     pub fn load() -> Result<Self> {
         let exe_dir = get_exe_dir()?;
-        let home = std::env::var("HOME").unwrap_or_default();
-        let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-        eprintln!("[DEBUG] exe_dir={}, home={}, cwd={}", exe_dir.display(), home, cwd);
-        let config_path = exe_dir.join("config.json");
-        let raw = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("Failed to read {}", config_path.display()))?;
-        let mut cfg: Config = serde_json::from_str(&raw)
-            .with_context(|| format!("Failed to parse {}", config_path.display()))?;
+        let home_path = Self::home_config_path();
 
-        let base_dir: PathBuf = if let Some(ref base) = cfg.model_base_dir {
-            expand_home(base)
+        let config_path = if home_path.exists() {
+            home_path.clone()
         } else {
-            exe_dir.clone()
+            let exe_path = exe_dir.join("config.json");
+            if exe_path.exists() {
+                if let Ok(raw) = std::fs::read_to_string(&exe_path) {
+                    let _ = std::fs::write(&home_path, &raw);
+                }
+            }
+            exe_path
         };
 
-        cfg.vad_model_dir = resolve_path(&base_dir, &cfg.vad_model_dir)
-            .to_str()
-            .unwrap()
-            .to_string();
-        cfg.asr_model_dir = resolve_path(&base_dir, &cfg.asr_model_dir)
-            .to_str()
-            .unwrap()
-            .to_string();
-        cfg.punc_model_dir = resolve_path(&base_dir, &cfg.punc_model_dir)
-            .to_str()
-            .unwrap()
-            .to_string();
-        cfg.llm_model_dir = resolve_path(&base_dir, &cfg.llm_model_dir)
-            .to_str()
-            .unwrap()
-            .to_string();
-        cfg.refine_db_path = resolve_path(&exe_dir, &cfg.refine_db_path)
-            .to_str()
-            .unwrap()
-            .to_string();
+        let raw = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read {}", config_path.display()))?;
+        let cfg: Config = serde_json::from_str(&raw)
+            .with_context(|| format!("Failed to parse {}", config_path.display()))?;
         Ok(cfg)
     }
 
@@ -317,8 +299,15 @@ impl Config {
     }
 
     pub fn save_active_scheme(scheme_name: &str) -> Result<()> {
-        let exe_dir = get_exe_dir()?;
-        let config_path = exe_dir.join("config.json");
+        let config_path = Self::home_config_path();
+        if !config_path.exists() {
+            let exe_dir = get_exe_dir()?;
+            let exe_path = exe_dir.join("config.json");
+            if exe_path.exists() {
+                let raw = std::fs::read_to_string(&exe_path)?;
+                let _ = std::fs::write(&config_path, &raw);
+            }
+        }
         let raw = std::fs::read_to_string(&config_path)
             .with_context(|| format!("Failed to read {}", config_path.display()))?;
         let mut json: Value = serde_json::from_str(&raw)

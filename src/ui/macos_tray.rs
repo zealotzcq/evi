@@ -1,4 +1,4 @@
-use tray_icon::menu::{Menu, MenuItem};
+use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 pub struct MacTray {
@@ -7,11 +7,18 @@ pub struct MacTray {
 }
 
 impl MacTray {
-    pub fn new(quit_item: MenuItem) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        quit_item: MenuItem,
+        coze_refine_item: MenuItem,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let icon = load_icon();
 
         let menu = Menu::new();
-        menu.append_items(&[&quit_item])?;
+        menu.append_items(&[
+            &coze_refine_item,
+            &PredefinedMenuItem::separator(),
+            &quit_item,
+        ])?;
 
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))

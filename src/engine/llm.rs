@@ -426,7 +426,8 @@ impl LlmEngine {
     }
 
     fn build(cfg: &crate::Config) -> Result<Self> {
-        let model_dir = std::path::PathBuf::from(&cfg.llm_model_dir);
+        let base = crate::models::base_dir(cfg);
+        let model_dir = crate::models::llm_model_dir(&base);
         let model_path = if model_dir.join("onnx").join("model_int8.onnx").exists() {
             model_dir.join("onnx").join("model_int8.onnx")
         } else if model_dir.join("onnx").join("model.onnx").exists() {
@@ -955,7 +956,8 @@ mod tests {
                 return;
             }
         };
-        let model_dir = std::path::PathBuf::from(&cfg.llm_model_dir);
+        let base = crate::models::default_base_dir();
+        let model_dir = crate::models::llm_model_dir(&base);
         let tokenizer_path = model_dir.join("tokenizer.json");
         if !tokenizer_path.exists() {
             eprintln!("Skipping test: tokenizer.json not found");
@@ -982,7 +984,8 @@ mod tests {
                 return;
             }
         };
-        let model_dir = std::path::PathBuf::from(&cfg.llm_model_dir);
+        let base = crate::models::default_base_dir();
+        let model_dir = crate::models::llm_model_dir(&base);
         let tokenizer_path = model_dir.join("tokenizer.json");
         if !tokenizer_path.exists() {
             eprintln!("Skipping test: tokenizer.json not found");
@@ -1019,7 +1022,8 @@ mod tests {
                 return;
             }
         };
-        let model_dir = std::path::PathBuf::from(&cfg.llm_model_dir);
+        let base = crate::models::default_base_dir();
+        let model_dir = crate::models::llm_model_dir(&base);
         let model_path = model_dir.join("onnx").join("model_int8.onnx");
         if !model_path.exists() {
             eprintln!(
@@ -1029,7 +1033,7 @@ mod tests {
             return;
         }
 
-        let engine = LlmEngine::build(&cfg, false).unwrap();
+        let engine = LlmEngine::build(&cfg).unwrap();
         eprintln!(
             "System prompt KV cache: {} tokens",
             engine.system_prompt_len
@@ -1039,6 +1043,7 @@ mod tests {
             "system prompt cache should not be empty"
         );
 
+        let db = crate::engine::debug_refine::DebugRefine::open(":memory:").unwrap();
         let cases = vec![
             ("嗯我的那个嗯肚子有点疼", true),
             ("我们现在来测试一下", true),
@@ -1048,29 +1053,31 @@ mod tests {
 
         for (i, (input, expect_nontrivial)) in cases.iter().enumerate() {
             eprintln!("--- Case {}: '{}' ---", i + 1, input);
-            let result = engine.refine(input).unwrap();
-            eprintln!("    -> '{}'", result);
+            let (refined, _tokens) = engine.refine(input, &db).unwrap();
+            eprintln!("    -> '{}'", refined);
 
             assert!(
-                !result.is_empty(),
+                !refined.is_empty(),
                 "[case {}] refine should produce non-empty output for '{}'",
                 i + 1,
                 input
             );
             if *expect_nontrivial {
                 assert!(
-                    !result.contains('*') || result.contains("不改变") || result.contains("口头语"),
+                    !refined.contains('*')
+                        || refined.contains("不改变")
+                        || refined.contains("口头语"),
                     "[case {}] output should not contain markdown: '{}'",
                     i + 1,
-                    result
+                    refined
                 );
                 assert!(
-                    !result.contains("不改变")
-                        && !result.contains("原始用词")
-                        && !result.contains("口头语"),
+                    !refined.contains("不改变")
+                        && !refined.contains("原始用词")
+                        && !refined.contains("口头语"),
                     "[case {}] output should not leak system prompt: '{}'",
                     i + 1,
-                    result
+                    refined
                 );
             }
         }
