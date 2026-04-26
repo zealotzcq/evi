@@ -146,7 +146,6 @@ impl RefineManager {
             return text.to_string();
         }
 
-
         let punct = ",.:?!;，。？！：";
         if let Some(ch) = text.chars().last() {
             if punct.contains(ch) {

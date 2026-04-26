@@ -23,7 +23,6 @@
 pub mod audio;
 pub mod engine;
 pub mod models;
-pub mod overlay;
 pub mod refine_mgr;
 pub mod secret;
 pub mod text;

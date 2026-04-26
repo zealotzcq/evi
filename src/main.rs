@@ -32,9 +32,6 @@ use vi::ui::log_capture::CaptureLogger;
 use vi::ui::PromptState;
 use vi::*;
 
-#[cfg(target_os = "windows")]
-use vi::overlay::Overlay;
-
 #[cfg(target_os = "macos")]
 use vi::ui::macos_tray::MacTray;
 
@@ -68,8 +65,6 @@ struct Session {
     refine_mgr: Mutex<RefineManager>,
     correction: FileCorrectionStore,
     recording: AtomicBool,
-    #[cfg(target_os = "windows")]
-    overlay: Overlay,
     results: Mutex<Vec<SegmentResult>>,
     audio_seq: AtomicU64,
     save_log: bool,
@@ -102,7 +97,6 @@ impl Session {
             Box::new(CpalAudioSource::new(DEFAULT_SAMPLE_RATE)?);
         let text_session = vi::text::tsf::create_platform_session()?;
         let correction = FileCorrectionStore::new("refine_log")?;
-        let overlay = Overlay::new();
 
         Ok(Self {
             audio_source: Mutex::new(audio_source),
@@ -113,7 +107,6 @@ impl Session {
             refine_mgr: Mutex::new(refine_mgr),
             correction,
             recording: AtomicBool::new(false),
-            overlay,
             results: Mutex::new(Vec::new()),
             audio_seq: AtomicU64::new(1),
             save_log: cfg.save_log,
@@ -303,9 +296,6 @@ impl Session {
         debug!("Recognized: {}", full_text);
         log_event("ASR_COMPLETE", &full_text);
 
-        #[cfg(target_os = "windows")]
-        self.overlay.show();
-
         let dr = self.dr.lock();
         let (final_text, llm_tokens) = self.refine_mgr.lock().refine(&full_text, &dr);
 
@@ -358,9 +348,6 @@ impl Session {
                 }
             }
         }
-
-        #[cfg(target_os = "windows")]
-        self.overlay.hide();
 
         if let Err(e) = self.text_session.lock().commit_text(&final_text) {
             error!("Failed to inject text: {e}");
@@ -586,10 +573,8 @@ fn main() -> Result<()> {
                 if pressed && !was_held {
                     ctrl_held_hook.store(true, Ordering::SeqCst);
                     sess.start_recording();
-                    sess.overlay.show();
                 } else if !pressed && was_held {
                     ctrl_held_hook.store(false, Ordering::SeqCst);
-                    sess.overlay.hide();
                     sess.stop_recording_and_process();
                 }
             }
@@ -640,6 +625,7 @@ fn main() -> Result<()> {
             }
             Err(e) => {
                 error!("Failed to load models: {}", e);
+                std::process::exit(1);
             }
         }
     });
