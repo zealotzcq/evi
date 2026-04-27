@@ -656,6 +656,19 @@ fn main() -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+fn show_messagebox(title: &str, message: &str) {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(format!(
+            "display dialog \"{}\" with title \"{}\" buttons {{\"确定\"}} default button \"确定\" with icon note",
+            esc(message),
+            esc(title)
+        ))
+        .status();
+}
+
+#[cfg(target_os = "macos")]
 fn request_all_permissions() -> Result<()> {
     use std::ffi::c_void;
     use std::ptr;
@@ -850,10 +863,25 @@ fn main() -> Result<()> {
         }
     }
 
+    if crate::models::find_model_base_dir().is_none() {
+        info!("Models not found in any ModelScope cache, downloading...");
+        vi::download_model::run_download_window()
+            .map_err(|e| {
+                show_messagebox("EVI 输入法", &format!("模型下载失败: {}", e));
+                e
+            })?;
+        show_messagebox("EVI 输入法", "模型下载完成，请重新启动程序。");
+        return Ok(());
+    }
+
     let mut cfg = Config::load()?;
+    if let Some(base) = crate::models::find_model_base_dir() {
+        cfg.model_base_dir = Some(base.to_string_lossy().into_owned());
+        let _ = crate::Config::save_model_base_dir(cfg.model_base_dir.as_deref());
+    }
 
     info!("Loading models...");
-    crate::models::ensure_model_dir(&mut cfg);
+
     let session = Arc::new(Session::new(&cfg)?);
     info!("All models loaded.");
 

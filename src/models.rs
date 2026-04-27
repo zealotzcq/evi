@@ -79,6 +79,36 @@ fn has_onnx_model(dir: &std::path::Path) -> bool {
     dir.join("model.onnx").exists() || dir.join("model_quant.onnx").exists()
 }
 
+pub fn models_found(cfg: &crate::Config) -> bool {
+    let base = base_dir(cfg);
+    REQUIRED_MODEL_SUBDIRS
+        .iter()
+        .all(|sub| has_onnx_model(&base.join(sub)))
+}
+
+fn all_models_found(base: &std::path::Path) -> bool {
+    REQUIRED_MODEL_SUBDIRS
+        .iter()
+        .all(|sub| has_onnx_model(&base.join(sub)))
+}
+
+pub fn find_model_base_dir() -> Option<std::path::PathBuf> {
+    if let Ok(val) = std::env::var("MODELSCOPE_CACHE") {
+        let p = std::path::PathBuf::from(&val);
+        if all_models_found(&p) {
+            return Some(p);
+        }
+    }
+
+    for candidate in modelscope_cache_candidates() {
+        if all_models_found(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
 pub fn ensure_model_dir(cfg: &mut crate::Config) {
     let base = base_dir(cfg);
     let all_found = REQUIRED_MODEL_SUBDIRS
@@ -131,6 +161,7 @@ fn modelscope_cache_candidates() -> Vec<std::path::PathBuf> {
             .join("hub")
             .join("models"),
     );
+    candidates.push(home.join(".cache").join("modelscope").join("hub"));
 
     #[cfg(target_os = "windows")]
     {

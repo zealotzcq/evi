@@ -21,6 +21,7 @@
 //! ```
 
 pub mod audio;
+pub mod download_model;
 pub mod engine;
 pub mod models;
 pub mod refine_mgr;

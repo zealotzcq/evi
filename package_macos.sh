@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 PKG_NAME="evi-${VERSION}-macos-x86_64"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RELEASE_DIR="${SCRIPT_DIR}/target/release"

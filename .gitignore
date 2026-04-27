@@ -6,3 +6,4 @@ log/
 *.pdb
 lib/libIME2
 *.md
+dist
