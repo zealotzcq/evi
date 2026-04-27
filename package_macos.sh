@@ -26,6 +26,8 @@ chmod +x "${APP_DIR}/Contents/MacOS/vi"
 # config + icon -> MacOS/ (vi looks for these relative to exe)
 cp "${SCRIPT_DIR}/config.json" "${APP_DIR}/Contents/MacOS/"
 cp "${SCRIPT_DIR}/evi.ico" "${APP_DIR}/Contents/MacOS/"
+cp "${SCRIPT_DIR}/prefill_template.txt" "${APP_DIR}/Contents/MacOS/"
+cp "${SCRIPT_DIR}/system_prompt.txt" "${APP_DIR}/Contents/MacOS/"
 
 # ORT dylib -> MacOS/ort-dylib/ (same layout as dev)
 mkdir -p "${APP_DIR}/Contents/MacOS/ort-dylib"
