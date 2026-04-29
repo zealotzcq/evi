@@ -442,6 +442,30 @@ impl Config {
         Ok(())
     }
 
+    pub fn save_punc_enabled(enabled: bool) -> Result<()> {
+        let config_path = Self::home_config_path();
+        if !config_path.exists() {
+            let exe_dir = get_exe_dir()?;
+            let exe_path = exe_dir.join("config.json");
+            if exe_path.exists() {
+                let raw = std::fs::read_to_string(&exe_path)?;
+                let _ = std::fs::write(&config_path, &raw);
+            }
+        }
+        let raw = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read {}", config_path.display()))?;
+        let mut json: Value = serde_json::from_str(&raw)
+            .with_context(|| format!("Failed to parse {}", config_path.display()))?;
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("punc_enabled".to_string(), Value::Bool(enabled));
+        }
+        let out =
+            serde_json::to_string_pretty(&json).with_context(|| "Failed to serialize config")?;
+        std::fs::write(&config_path, out)
+            .with_context(|| format!("Failed to write {}", config_path.display()))?;
+        Ok(())
+    }
+
     pub fn save_model_base_dir(path: Option<&str>) -> Result<()> {
         let config_path = Self::home_config_path();
         if !config_path.exists() {

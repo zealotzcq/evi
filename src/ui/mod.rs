@@ -61,6 +61,19 @@ pub fn set_clipboard_restore_behavior(behavior: &str) {
     }
 }
 
+pub static PUNC_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn get_punc_enabled() -> bool {
+    PUNC_ENABLED.load(Ordering::SeqCst)
+}
+
+pub fn set_punc_enabled(enabled: bool) {
+    PUNC_ENABLED.store(enabled, Ordering::SeqCst);
+    if let Err(e) = crate::Config::save_punc_enabled(enabled) {
+        log::warn!("Failed to save punc_enabled: {}", e);
+    }
+}
+
 pub struct Scheme {
     pub name: String,
     pub system_prompt: String,

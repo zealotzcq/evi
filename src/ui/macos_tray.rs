@@ -6,16 +6,15 @@ pub struct MacTray {
     tray: TrayIcon,
     coze_refine_item: MenuItem,
     energy_gate_item: MenuItem,
+    punc_item: MenuItem,
 }
-
-unsafe impl Send for MacTray {}
-unsafe impl Sync for MacTray {}
 
 impl MacTray {
     pub fn new(
         quit_item: MenuItem,
         coze_refine_item: MenuItem,
         energy_gate_item: MenuItem,
+        punc_item: MenuItem,
         set_key_item: MenuItem,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let icon = load_icon();
@@ -25,6 +24,8 @@ impl MacTray {
             &coze_refine_item,
             &PredefinedMenuItem::separator(),
             &energy_gate_item,
+            &PredefinedMenuItem::separator(),
+            &punc_item,
             &PredefinedMenuItem::separator(),
             &set_key_item,
             &PredefinedMenuItem::separator(),
@@ -41,6 +42,7 @@ impl MacTray {
             tray,
             coze_refine_item,
             energy_gate_item,
+            punc_item,
         })
     }
 
@@ -67,7 +69,18 @@ impl MacTray {
             "自适应能量门控"
         });
     }
+
+    pub fn update_punc(&self, enabled: bool) {
+        let _ = self.punc_item.set_text(if enabled {
+            "✓ 智能标点"
+        } else {
+            "智能标点"
+        });
+    }
 }
+
+unsafe impl Send for MacTray {}
+unsafe impl Sync for MacTray {}
 
 pub enum TrayDisplayState {
     Idle,

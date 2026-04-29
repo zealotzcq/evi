@@ -42,6 +42,11 @@ impl RefineManager {
         })
     }
 
+    pub fn set_punc_enabled(&mut self, enabled: bool) {
+        self.punc_enabled = enabled;
+        info!("RefineManager: punc_enabled set to {}", enabled);
+    }
+
     pub fn rebuild_llm_prompt(
         &mut self,
         system_prompt: &str,

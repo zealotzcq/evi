@@ -12,6 +12,7 @@ const ID_TRAY_ENERGY_GATE: usize = 1005;
 const ID_TRAY_CLIPBOARD_100MS: usize = 1006;
 const ID_TRAY_CLIPBOARD_500MS: usize = 1007;
 const ID_TRAY_CLIPBOARD_NONE: usize = 1008;
+const ID_TRAY_PUNC: usize = 1009;
 const ID_TRAY_SET_KEY: usize = 1004;
 const ID_TRAY_EXIT: usize = 1002;
 
@@ -147,6 +148,10 @@ unsafe extern "system" fn subclass_wndproc(
                 ID_TRAY_CLIPBOARD_NONE => {
                     crate::ui::set_clipboard_restore_behavior("none");
                 }
+                ID_TRAY_PUNC => {
+                    let enabled = !crate::ui::get_punc_enabled();
+                    crate::ui::set_punc_enabled(enabled);
+                }
                 ID_TRAY_SET_KEY => {
                     crate::ui::api_key_dialog::request_api_key_dialog();
                 }
@@ -218,6 +223,17 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         MF_STRING | if gate_checked { MF_CHECKED } else { MF_STRING },
         ID_TRAY_ENERGY_GATE,
         gate_ptr,
+    );
+
+    // 智能标点
+    let punc_text: Vec<u16> = "智能标点\0".encode_utf16().collect();
+    let punc_ptr = PCWSTR(punc_text.as_ptr());
+    let punc_checked = crate::ui::get_punc_enabled();
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING | if punc_checked { MF_CHECKED } else { MF_STRING },
+        ID_TRAY_PUNC,
+        punc_ptr,
     );
 
     // 剪贴板恢复行为子菜单

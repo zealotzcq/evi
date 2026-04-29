@@ -492,6 +492,8 @@ fn main() -> Result<()> {
             "Restored clipboard_restore_behavior from config: {}",
             cfg.clipboard_restore_behavior
         );
+        vi::ui::set_punc_enabled(cfg.punc_enabled);
+        info!("Restored punc_enabled from config: {}", cfg.punc_enabled);
     }
 
     {
@@ -887,6 +889,8 @@ fn main() -> Result<()> {
             "Restored clipboard_restore_behavior from config: {}",
             cfg.clipboard_restore_behavior
         );
+        vi::ui::set_punc_enabled(cfg.punc_enabled);
+        info!("Restored punc_enabled from config: {}", cfg.punc_enabled);
     }
 
     if crate::models::find_model_base_dir().is_none() {
@@ -920,11 +924,13 @@ fn main() -> Result<()> {
     let coze_id = coze_refine_item.id().clone();
     let energy_gate_item = MenuItem::new("自适应能量门控", true, None);
     let energy_gate_id = energy_gate_item.id().clone();
+    let punc_item = MenuItem::new("智能标点", true, None);
+    let punc_id = punc_item.id().clone();
     let set_key_item = MenuItem::new("设置 API Key", true, None);
     let set_key_id = set_key_item.id().clone();
 
     let tray: Arc<MacTray> = Arc::new(
-        MacTray::new(quit_item, coze_refine_item, energy_gate_item, set_key_item)
+        MacTray::new(quit_item, coze_refine_item, energy_gate_item, punc_item, set_key_item)
             .map_err(|e| anyhow::anyhow!("Failed to create tray: {}", e))?,
     );
 
@@ -932,6 +938,7 @@ fn main() -> Result<()> {
         let has_key = vi::secret::get_api_key().is_some();
         tray.update_coze_refine(vi::ui::get_llm_remote_enabled(), has_key);
         tray.update_energy_gate(vi::ui::get_energy_gate_enabled());
+        tray.update_punc(vi::ui::get_punc_enabled());
     }
 
     let menu_proxy = proxy.clone();
@@ -949,6 +956,10 @@ fn main() -> Result<()> {
         } else if event.id == energy_gate_id {
             let current = vi::ui::get_energy_gate_enabled();
             vi::ui::set_energy_gate_enabled(!current);
+            let _ = menu_proxy.send_event(MacEvent::UpdateTray);
+        } else if event.id == punc_id {
+            let current = vi::ui::get_punc_enabled();
+            vi::ui::set_punc_enabled(!current);
             let _ = menu_proxy.send_event(MacEvent::UpdateTray);
         } else if event.id == set_key_id {
             vi::ui::api_key_dialog::request_api_key_dialog();
@@ -1012,6 +1023,9 @@ fn main() -> Result<()> {
                 let gate_enabled = vi::ui::get_energy_gate_enabled();
                 tray.update_energy_gate(gate_enabled);
                 session.vad.lock().set_energy_gate_enabled(gate_enabled);
+                let punc_enabled = vi::ui::get_punc_enabled();
+                tray.update_punc(punc_enabled);
+                session.refine_mgr.lock().set_punc_enabled(punc_enabled);
             }
 
             Event::UserEvent(MacEvent::Quit) => {
