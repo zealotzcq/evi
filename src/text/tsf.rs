@@ -4,6 +4,7 @@ use log::info;
 use parking_lot::Mutex;
 use std::ptr;
 use windows::Win32::Foundation::{HANDLE, HGLOBAL};
+use windows::Win32::Globalization::{WideCharToMultiByte, CP_ACP};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
     SetClipboardData,
@@ -15,9 +16,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL,
 };
 
-enum SavedClipboard {
-    Text(String),
-    Empty,
+const CF_TEXT: u32 = 1;
+const CF_UNICODETEXT: u32 = 13;
+
+struct SavedClipboard {
+    cf_text: Option<Vec<u8>>,
+    cf_unicodetext: Option<Vec<u16>>,
 }
 
 pub struct ClipboardTextOutput {
@@ -35,11 +39,15 @@ impl ClipboardTextOutput {
     }
 
     unsafe fn save_clipboard(&self) -> SavedClipboard {
+        let mut saved = SavedClipboard {
+            cf_text: None,
+            cf_unicodetext: None,
+        };
         if OpenClipboard(None).is_err() {
-            return SavedClipboard::Empty;
+            return saved;
         }
-        if IsClipboardFormatAvailable(13u32).is_ok() {
-            if let Ok(handle) = GetClipboardData(13u32) {
+        if IsClipboardFormatAvailable(CF_UNICODETEXT).is_ok() {
+            if let Ok(handle) = GetClipboardData(CF_UNICODETEXT) {
                 let hglobal = HGLOBAL(handle.0 as *mut _);
                 let ptr = GlobalLock(hglobal);
                 if !ptr.is_null() {
@@ -48,35 +56,55 @@ impl ClipboardTextOutput {
                         .take_while(|&i| *(ptr as *const u16).add(i) != 0)
                         .count();
                     let slice = std::slice::from_raw_parts(ptr as *const u16, len);
-                    let text = String::from_utf16_lossy(slice);
+                    saved.cf_unicodetext = Some(slice.to_vec());
                     GlobalUnlock(hglobal).ok();
-                    CloseClipboard().ok();
-                    return SavedClipboard::Text(text);
+                }
+            }
+        }
+        if IsClipboardFormatAvailable(CF_TEXT).is_ok() {
+            if let Ok(handle) = GetClipboardData(CF_TEXT) {
+                let hglobal = HGLOBAL(handle.0 as *mut _);
+                let ptr = GlobalLock(hglobal);
+                if !ptr.is_null() {
+                    let size = GlobalSize(hglobal) as usize;
+                    let len = (0..size)
+                        .take_while(|&i| *(ptr as *const u8).add(i) != 0)
+                        .count();
+                    let slice = std::slice::from_raw_parts(ptr as *const u8, len);
+                    saved.cf_text = Some(slice.to_vec());
+                    GlobalUnlock(hglobal).ok();
                 }
             }
         }
         CloseClipboard().ok();
-        SavedClipboard::Empty
+        saved
     }
 
     unsafe fn restore_clipboard(&self, saved: SavedClipboard) {
         if OpenClipboard(None).is_err() {
             return;
         }
-        match saved {
-            SavedClipboard::Text(text) => {
-                let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0u16)).collect();
-                if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2) {
-                    let ptr = GlobalLock(hmem);
-                    if !ptr.is_null() {
-                        ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
-                        GlobalUnlock(hmem).ok();
-                        SetClipboardData(13, HANDLE(hmem.0 as isize)).ok();
-                    }
+        EmptyClipboard().ok();
+        if let Some(ref wide) = saved.cf_unicodetext {
+            let data: Vec<u16> = wide.iter().copied().chain(std::iter::once(0u16)).collect();
+            if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, data.len() * 2) {
+                let ptr = GlobalLock(hmem);
+                if !ptr.is_null() {
+                    ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u16, data.len());
+                    GlobalUnlock(hmem).ok();
+                    SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0 as isize)).ok();
                 }
             }
-            SavedClipboard::Empty => {
-                EmptyClipboard().ok();
+        }
+        if let Some(ref ansi) = saved.cf_text {
+            let data: Vec<u8> = ansi.iter().copied().chain(std::iter::once(0u8)).collect();
+            if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, data.len()) {
+                let ptr = GlobalLock(hmem);
+                if !ptr.is_null() {
+                    ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, data.len());
+                    GlobalUnlock(hmem).ok();
+                    SetClipboardData(CF_TEXT, HANDLE(hmem.0 as isize)).ok();
+                }
             }
         }
         CloseClipboard().ok();
@@ -87,23 +115,45 @@ impl ClipboardTextOutput {
         if OpenClipboard(None).is_err() {
             return false;
         }
-        let hmem = match GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2) {
-            Ok(h) => h,
-            Err(_) => {
-                CloseClipboard().ok();
-                return false;
+        EmptyClipboard().ok();
+        if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2) {
+            let ptr = GlobalLock(hmem);
+            if !ptr.is_null() {
+                ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
+                GlobalUnlock(hmem).ok();
+                SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0 as isize)).ok();
             }
-        };
-        let ptr = GlobalLock(hmem);
-        if ptr.is_null() {
-            CloseClipboard().ok();
-            return false;
         }
-        ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
-        GlobalUnlock(hmem).ok();
-        if SetClipboardData(13, HANDLE(hmem.0 as isize)).is_err() {
-            CloseClipboard().ok();
-            return false;
+        let wide_content: Vec<u16> = text.encode_utf16().collect();
+        if !wide_content.is_empty() {
+            let ansi_len = WideCharToMultiByte(
+                CP_ACP,
+                0,
+                &wide_content,
+                None,
+                windows::core::PCSTR(ptr::null()),
+                None,
+            );
+            if ansi_len > 0 {
+                let mut ansi = vec![0u8; ansi_len as usize];
+                WideCharToMultiByte(
+                    CP_ACP,
+                    0,
+                    &wide_content,
+                    Some(&mut ansi),
+                    windows::core::PCSTR(ptr::null()),
+                    None,
+                );
+                let data: Vec<u8> = ansi.into_iter().chain(std::iter::once(0u8)).collect();
+                if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, data.len()) {
+                    let ptr = GlobalLock(hmem);
+                    if !ptr.is_null() {
+                        ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, data.len());
+                        GlobalUnlock(hmem).ok();
+                        SetClipboardData(CF_TEXT, HANDLE(hmem.0 as isize)).ok();
+                    }
+                }
+            }
         }
         CloseClipboard().ok();
         std::thread::sleep(std::time::Duration::from_millis(30));

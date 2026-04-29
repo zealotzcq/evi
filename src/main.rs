@@ -122,7 +122,11 @@ impl Session {
         let punc_dir = crate::models::punc_model_dir(&base);
 
         debug!("Loading VAD model from {}...", vad_dir.display());
-        let vad = VadEngine::new(&vad_dir, _cfg.energy_gate_enabled, _cfg.energy_gate_db_offset)?;
+        let vad = VadEngine::new(
+            &vad_dir,
+            _cfg.energy_gate_enabled,
+            _cfg.energy_gate_db_offset,
+        )?;
         debug!("Loading ASR model from {}...", asr_dir.display());
         let asr = AsrEngine::new(&asr_dir)?;
         debug!("Loading Punc model from {}...", punc_dir.display());
@@ -479,6 +483,15 @@ fn main() -> Result<()> {
             vi::ui::set_llm_remote(true);
             info!("Restored llm_remote_enabled from config");
         }
+        if cfg.energy_gate_enabled {
+            vi::ui::set_energy_gate_enabled(true);
+            info!("Restored energy_gate_enabled from config");
+        }
+        *vi::ui::CLIPBOARD_RESTORE_BEHAVIOR.write() = cfg.clipboard_restore_behavior.clone();
+        info!(
+            "Restored clipboard_restore_behavior from config: {}",
+            cfg.clipboard_restore_behavior
+        );
     }
 
     {
@@ -878,11 +891,10 @@ fn main() -> Result<()> {
 
     if crate::models::find_model_base_dir().is_none() {
         info!("Models not found in any ModelScope cache, downloading...");
-        vi::download_model::run_download_window()
-            .map_err(|e| {
-                show_messagebox("EVI 输入法", &format!("模型下载失败: {}", e));
-                e
-            })?;
+        vi::download_model::run_download_window().map_err(|e| {
+            show_messagebox("EVI 输入法", &format!("模型下载失败: {}", e));
+            e
+        })?;
         show_messagebox("EVI 输入法", "模型下载完成，请重新启动程序。");
         return Ok(());
     }
