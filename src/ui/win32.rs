@@ -94,7 +94,7 @@ unsafe extern "system" fn subclass_wndproc(
 ) -> LRESULT {
     match msg {
         WM_TIMER => {
-            if wparam.0 as usize == ID_TIMER_HIDE {
+            if wparam.0 == ID_TIMER_HIDE {
                 KillTimer(hwnd, ID_TIMER_HIDE).ok();
                 if !TRAY_DEBUG.load(Ordering::SeqCst) {
                     ShowWindow(hwnd, SW_HIDE);

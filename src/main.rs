@@ -481,6 +481,16 @@ fn main() -> Result<()> {
 
     vi::secret::load_key();
 
+    if crate::models::find_model_base_dir().is_none() {
+        info!("Models not found in any ModelScope cache, downloading...");
+        if let Err(e) = vi::download_model::run_download_window() {
+            show_messagebox("EVI 输入法", &format!("模型下载失败: {}", e));
+            return Err(e);
+        }
+        show_messagebox("EVI 输入法", "模型下载完成，请重新启动程序。");
+        return Ok(());
+    }
+
     if let Ok(cfg) = Config::load() {
         let scheme = if cfg.refine_scheme != "default" {
             cfg.refine_scheme.clone()
@@ -672,6 +682,21 @@ fn main() -> Result<()> {
     std::thread::sleep(Duration::from_secs(3));
     info!("Bye!");
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn show_messagebox(title: &str, message: &str) {
+    use windows::core::PCWSTR;
+    let title_w: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let msg_w: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::MessageBoxW(
+            None,
+            PCWSTR(msg_w.as_ptr()),
+            PCWSTR(title_w.as_ptr()),
+            windows::Win32::UI::WindowsAndMessaging::MB_OK,
+        );
+    };
 }
 
 #[cfg(target_os = "macos")]

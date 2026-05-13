@@ -42,7 +42,7 @@ jobs:
           path: evi-*-windows-x86_64.zip
 
   build-mac-x86:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Extract version
@@ -52,12 +52,14 @@ jobs:
           VER="${BRANCH#V}"
           VER="${VER%_release}"
           echo "VERSION=$VER" >> "$GITHUB_OUTPUT"
+      - name: Add x86_64 target
+        run: rustup target add x86_64-apple-darwin
       - name: Download ONNX Runtime
         run: |
           mkdir -p ort-dylib
           curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/onnxruntime-osx-x86_64-1.24.2.tgz" | tar xz -C ort-dylib
       - name: Build
-        run: cargo build --release --features "mac"
+        run: cargo build --release --features "mac" --target x86_64-apple-darwin
       - name: Package DMG
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}

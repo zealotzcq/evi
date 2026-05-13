@@ -130,7 +130,7 @@ impl LlmRemoteEngine {
             Ok(r) => r,
             Err(e) => {
                 let result_path = std::path::PathBuf::from("result.json");
-                let _ = std::fs::write(&result_path, &format!("error: {}", e));
+                let _ = std::fs::write(&result_path, format!("error: {}", e));
                 warn!("LlmRemote: request failed: {}", e);
                 bail!("API request failed: {}", e);
             }

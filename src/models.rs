@@ -22,9 +22,18 @@ pub fn base_dir(cfg: &crate::Config) -> std::path::PathBuf {
     }
 }
 
+fn resolve_modelscope_cache() -> Option<std::path::PathBuf> {
+    let val = std::env::var("MODELSCOPE_CACHE").ok()?;
+    let p = std::path::PathBuf::from(&val);
+    Some(if p.ends_with("models") {
+        p
+    } else {
+        p.join("models")
+    })
+}
+
 pub fn default_base_dir() -> std::path::PathBuf {
-    if let Ok(val) = std::env::var("MODELSCOPE_CACHE") {
-        let p = std::path::PathBuf::from(&val);
+    if let Some(p) = resolve_modelscope_cache() {
         if REQUIRED_MODEL_SUBDIRS
             .iter()
             .all(|sub| has_onnx_model(&p.join(sub)))
@@ -52,11 +61,11 @@ pub fn refine_db_path() -> std::path::PathBuf {
 }
 
 fn expand_home(path: &str) -> std::path::PathBuf {
-    if path.starts_with('~') {
+    if let Some(stripped) = path.strip_prefix('~') {
         let home = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .unwrap_or_else(|_| ".".to_string());
-        std::path::PathBuf::from(home).join(&path[1..])
+        std::path::PathBuf::from(home).join(stripped)
     } else {
         std::path::PathBuf::from(path)
     }
@@ -93,20 +102,15 @@ fn all_models_found(base: &std::path::Path) -> bool {
 }
 
 pub fn find_model_base_dir() -> Option<std::path::PathBuf> {
-    if let Ok(val) = std::env::var("MODELSCOPE_CACHE") {
-        let p = std::path::PathBuf::from(&val);
+    if let Some(p) = resolve_modelscope_cache() {
         if all_models_found(&p) {
             return Some(p);
         }
     }
 
-    for candidate in modelscope_cache_candidates() {
-        if all_models_found(&candidate) {
-            return Some(candidate);
-        }
-    }
-
-    None
+    modelscope_cache_candidates()
+        .into_iter()
+        .find(|candidate| all_models_found(candidate))
 }
 
 pub fn ensure_model_dir(cfg: &mut crate::Config) {
@@ -150,8 +154,8 @@ fn modelscope_cache_candidates() -> Vec<std::path::PathBuf> {
     let home = home_dir();
     let mut candidates = Vec::new();
 
-    if let Ok(val) = std::env::var("MODELSCOPE_CACHE") {
-        candidates.push(std::path::PathBuf::from(val).join("models"));
+    if let Some(p) = resolve_modelscope_cache() {
+        candidates.push(p);
     }
 
     candidates.push(home.join(".modelscope").join("hub").join("models"));

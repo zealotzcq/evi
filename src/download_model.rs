@@ -43,6 +43,14 @@ struct FileEntry {
 }
 
 fn models_download_dir() -> PathBuf {
+    if let Ok(val) = std::env::var("MODELSCOPE_CACHE") {
+        let p = PathBuf::from(val);
+        return if p.ends_with("models") {
+            p
+        } else {
+            p.join("models")
+        };
+    }
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
@@ -132,7 +140,7 @@ fn download_file(
         let _ = std::fs::remove_file(&file_path);
     }
 
-    let tmp_dir = std::env::temp_dir().join("evi-download").join(model_id);
+    let tmp_dir = dest_dir.join(".tmp");
     std::fs::create_dir_all(&tmp_dir)?;
     let tmp_path = tmp_dir.join(&file.path);
 
@@ -186,7 +194,7 @@ fn download_file(
             .unwrap_or("");
         let total = content_range
             .split('/')
-            .last()
+            .next_back()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(file.size);
         (existing_size, total)
@@ -214,8 +222,10 @@ fn download_file(
         .with_context(|| format!("Failed to write {}", file.name))?;
     drop(out);
 
-    std::fs::rename(&tmp_path, &file_path)
-        .with_context(|| format!("Failed to move {} to final location", file.name))?;
+    if tmp_path != file_path {
+        std::fs::rename(&tmp_path, &file_path)
+            .with_context(|| format!("Failed to move {} to final location", file.name))?;
+    }
 
     logs.lock()
         .push(format!("  ✓ {} ({})", file.name, format_bytes(file.size)));
@@ -250,7 +260,7 @@ impl<R: Read> Read for ProgressReader<R> {
         if n > 0 {
             self.read += n as u64;
             if self.total > 0 {
-                let pct = self.read * 100 / self.total;
+                let pct = self.read.checked_div(self.total).map_or(0, |q| q * 100);
                 if pct >= self.last_pct + 10 {
                     self.last_pct = pct;
                     self.logs
