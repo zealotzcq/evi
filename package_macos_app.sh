@@ -1,7 +1,10 @@
 #!/bin/bash
 set -e
 
-VERSION="2.1.0"
+VERSION="${1:-}"
+if [ -z "$VERSION" ]; then
+    VERSION="$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')"
+fi
 PKG_NAME="evi-${VERSION}-macos-aarch64"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RELEASE_DIR="${SCRIPT_DIR}/target/aarch64-apple-darwin/release"

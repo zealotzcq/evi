@@ -1,0 +1,123 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'V*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: ''
+            artifact: windows-x86_64
+            package_script: ''
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: macos-x86_64
+            ort_url: onnxruntime-osx-x86_64-1.24.2
+            package_script: package_macos.sh
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-aarch64
+            ort_url: onnxruntime-osx-arm64-1.24.2
+            package_script: package_macos_app.sh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          VER="${TAG#V}"
+          echo "VERSION=$VER" >> "$GITHUB_OUTPUT"
+      - name: Set version in Cargo.toml (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          (Get-Content Cargo.toml) -replace '^version = ".*"', "version = `"${env:VERSION}`"" | Set-Content Cargo.toml
+      - name: Set version in Cargo.toml (macOS)
+        if: runner.os == 'macOS'
+        run: sed -i '' "s/^version = \".*\"/version = \"${{ steps.version.outputs.VERSION }}\"/" Cargo.toml
+      - name: Add Rust target
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
+      - name: Download ONNX Runtime (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p ort-dylib
+          curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/${{ matrix.ort_url }}.tgz" | tar xz -C ort-dylib
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: cargo build --release --features "mac" --target ${{ matrix.target }}
+      - name: Package ZIP (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          $pkgName = "evi-${env:VERSION}-windows-x86_64"
+          mkdir staging
+          Copy-Item target\release\vi.exe staging\
+          Copy-Item evi.ico staging\
+          Copy-Item config.json staging\
+          Copy-Item system_prompt.txt staging\
+          Copy-Item prefill_template.txt staging\
+          Compress-Archive -Path staging\* -DestinationPath "${pkgName}.zip"
+      - name: Package DMG (macOS)
+        if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          chmod +x ${{ matrix.package_script }} && bash ${{ matrix.package_script }} "${VERSION}"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: evi-${{ steps.version.outputs.VERSION }}-${{ matrix.artifact }}
+          path: |
+            evi-${{ steps.version.outputs.VERSION }}-windows-x86_64.zip
+            dist/evi-${{ steps.version.outputs.VERSION }}-macos-*.dmg
+
+  create-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          VER="${TAG#V}"
+          echo "VERSION=$VER" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: List artifacts
+        run: find artifacts -type f | sort
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          gh release create "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "EVI v${VERSION}" \
+            --notes "Release EVI v${VERSION}" \
+            artifacts/evi-${VERSION}-windows-x86_64/*.zip \
+            artifacts/evi-${VERSION}-macos-x86_64/*.dmg \
+            artifacts/evi-${VERSION}-macos-aarch64/*.dmg

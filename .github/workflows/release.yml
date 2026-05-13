@@ -20,6 +20,12 @@ jobs:
           $branch = "${{ github.ref_name }}"
           $ver = $branch -replace '^V', '' -replace '_release$', ''
           echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
+      - name: Set version in Cargo.toml
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          (Get-Content Cargo.toml) -replace '^version = ".*"', "version = `"${env:VERSION}`"" | Set-Content Cargo.toml
       - name: Build
         run: cargo build --release
       - name: Package ZIP
@@ -39,7 +45,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: evi-${{ steps.version.outputs.VERSION }}-windows-x86_64
-          path: evi-*-windows-x86_64.zip
+          path: evi-${{ steps.version.outputs.VERSION }}-windows-x86_64.zip
 
   build-mac-x86:
     runs-on: macos-latest
@@ -64,13 +70,12 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          sed -i '' "s/^VERSION=.*/VERSION=\"${VERSION}\"/" package_macos.sh
-          chmod +x package_macos.sh && bash package_macos.sh
+          chmod +x package_macos.sh && bash package_macos.sh "${VERSION}"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: evi-${{ steps.version.outputs.VERSION }}-macos-x86_64
-          path: dist/evi-*-macos-x86_64.dmg
+          path: dist/evi-${{ steps.version.outputs.VERSION }}-macos-x86_64.dmg
 
   build-mac-arm:
     runs-on: macos-latest
@@ -93,10 +98,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          sed -i '' "s/^VERSION=.*/VERSION=\"${VERSION}\"/" package_macos_app.sh
-          chmod +x package_macos_app.sh && bash package_macos_app.sh
+          chmod +x package_macos_app.sh && bash package_macos_app.sh "${VERSION}"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: evi-${{ steps.version.outputs.VERSION }}-macos-aarch64
-          path: dist/evi-*-macos-aarch64.dmg
+          path: dist/evi-${{ steps.version.outputs.VERSION }}-macos-aarch64.dmg

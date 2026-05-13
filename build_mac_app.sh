@@ -2,6 +2,11 @@
 set -e
 cd "$(dirname "$0")"
 
+VERSION="${1:-}"
+if [ -n "$VERSION" ]; then
+    sed -i '' "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+fi
+
 ORT_VERSION="1.24.2"
 ORT_DIR="ort-dylib/onnxruntime-osx-arm64-${ORT_VERSION}"
 
