@@ -28,7 +28,7 @@ jobs:
             ort_url: onnxruntime-osx-arm64-1.24.2
             package_script: package_macos_app.sh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: main
       - name: Extract version
@@ -83,7 +83,7 @@ jobs:
         run: |
           chmod +x ${{ matrix.package_script }} && bash ${{ matrix.package_script }} "${VERSION}"
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: evi-${{ steps.version.outputs.VERSION }}-${{ matrix.artifact }}
           path: |
@@ -118,5 +118,5 @@ jobs:
             --title "EVI v${VERSION}" \
             --notes "Release EVI v${VERSION}" \
             artifacts/evi-${VERSION}-windows-x86_64/*.zip \
-            artifacts/evi-${VERSION}-macos-x86_64/*.dmg \
-            artifacts/evi-${VERSION}-macos-aarch64/*.dmg
+            artifacts/evi-${VERSION}-macos-x86_64/dist/*.dmg \
+            artifacts/evi-${VERSION}-macos-aarch64/dist/*.dmg
