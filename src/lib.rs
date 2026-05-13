@@ -271,7 +271,7 @@ pub struct Config {
     pub refine_scheme: String,
     #[serde(default = "default_true")]
     pub punc_enabled: bool,
-    #[serde(default = "default_false")]
+    #[serde(default = "default_true")]
     pub energy_gate_enabled: bool,
     #[serde(default = "default_energy_gate_db_offset")]
     pub energy_gate_db_offset: f64,

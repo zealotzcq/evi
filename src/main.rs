@@ -491,10 +491,11 @@ fn main() -> Result<()> {
         };
         vi::ui::set_refine_scheme(&scheme);
         info!("Restored refine_scheme from config: {}", scheme);
-        if cfg.energy_gate_enabled {
-            vi::ui::set_energy_gate_enabled(true);
-            info!("Restored energy_gate_enabled from config");
-        }
+        vi::ui::set_energy_gate_enabled(cfg.energy_gate_enabled);
+        info!(
+            "Restored energy_gate_enabled from config: {}",
+            cfg.energy_gate_enabled
+        );
         vi::ui::set_punc_enabled(cfg.punc_enabled);
         info!("Restored punc_enabled from config: {}", cfg.punc_enabled);
     }
@@ -888,10 +889,11 @@ fn main() -> Result<()> {
         };
         vi::ui::set_refine_scheme(&scheme);
         info!("Restored refine_scheme from config: {}", scheme);
-        if cfg.energy_gate_enabled {
-            vi::ui::set_energy_gate_enabled(true);
-            info!("Restored energy_gate_enabled from config");
-        }
+        vi::ui::set_energy_gate_enabled(cfg.energy_gate_enabled);
+        info!(
+            "Restored energy_gate_enabled from config: {}",
+            cfg.energy_gate_enabled
+        );
         vi::ui::set_punc_enabled(cfg.punc_enabled);
         info!("Restored punc_enabled from config: {}", cfg.punc_enabled);
     }

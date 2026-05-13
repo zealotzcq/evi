@@ -35,7 +35,7 @@ pub fn set_refine_scheme(scheme: &str) {
     }
 }
 
-pub static ENERGY_GATE_ENABLED: AtomicBool = AtomicBool::new(false);
+pub static ENERGY_GATE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub fn get_energy_gate_enabled() -> bool {
     ENERGY_GATE_ENABLED.load(Ordering::SeqCst)
