@@ -21,7 +21,6 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: macos-x86_64
-            ort_url: onnxruntime-osx-x86_64-1.24.2
             package_script: package_macos.sh
           - os: macos-latest
             target: aarch64-apple-darwin
@@ -52,8 +51,8 @@ jobs:
       - name: Add Rust target
         if: matrix.target != ''
         run: rustup target add ${{ matrix.target }}
-      - name: Download ONNX Runtime (macOS)
-        if: runner.os == 'macOS'
+      - name: Download ONNX Runtime (macOS ARM64)
+        if: matrix.ort_url != ''
         run: |
           mkdir -p ort-dylib
           curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/${{ matrix.ort_url }}.tgz" | tar xz -C ort-dylib
