@@ -7,7 +7,7 @@ if [ -z "$VERSION" ]; then
 fi
 PKG_NAME="evi-${VERSION}-macos-x86_64"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RELEASE_DIR="${SCRIPT_DIR}/target/release"
+RELEASE_DIR="${SCRIPT_DIR}/target/x86_64-apple-darwin/release"
 STAGING="${SCRIPT_DIR}/dist/staging"
 APP_DIR="${STAGING}/EVI.app"
 
