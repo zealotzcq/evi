@@ -55,9 +55,10 @@ pub fn default_base_dir() -> std::path::PathBuf {
 }
 
 pub fn refine_db_path() -> std::path::PathBuf {
-    crate::Config::exe_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("refine_log.db")
+    let home = home_dir();
+    let dir = home.join(".evi");
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("log.db")
 }
 
 fn expand_home(path: &str) -> std::path::PathBuf {

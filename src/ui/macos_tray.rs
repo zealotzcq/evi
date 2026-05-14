@@ -8,6 +8,7 @@ pub struct MacTray {
     coze_refine_item: MenuItem,
     energy_gate_item: MenuItem,
     punc_item: MenuItem,
+    save_log_item: MenuItem,
 }
 
 impl MacTray {
@@ -17,12 +18,17 @@ impl MacTray {
         coze_refine_item: MenuItem,
         energy_gate_item: MenuItem,
         punc_item: MenuItem,
+        save_log_item: MenuItem,
+        edit_db_item: MenuItem,
         set_key_item: MenuItem,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let icon = load_icon();
 
         let refine_submenu =
             Submenu::with_items("润色方案", true, &[&refine_default_item, &coze_refine_item])?;
+
+        let exp_submenu =
+            Submenu::with_items("体验优化计划", true, &[&save_log_item, &edit_db_item])?;
 
         let menu = Menu::new();
         menu.append_items(&[
@@ -33,6 +39,8 @@ impl MacTray {
             &punc_item,
             &PredefinedMenuItem::separator(),
             &set_key_item,
+            &PredefinedMenuItem::separator(),
+            &exp_submenu,
             &PredefinedMenuItem::separator(),
             &quit_item,
         ])?;
@@ -49,6 +57,7 @@ impl MacTray {
             coze_refine_item,
             energy_gate_item,
             punc_item,
+            save_log_item,
         })
     }
 
@@ -89,6 +98,14 @@ impl MacTray {
             "✓ 智能标点"
         } else {
             "智能标点"
+        });
+    }
+
+    pub fn update_save_log(&self, enabled: bool) {
+        let _ = self.save_log_item.set_text(if enabled {
+            "✓ 启用日志"
+        } else {
+            "启用日志"
         });
     }
 }

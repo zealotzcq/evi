@@ -1,5 +1,7 @@
 pub mod api_key_dialog;
 pub mod log_capture;
+pub mod refine_api;
+pub mod refine_editor;
 #[cfg(target_os = "windows")]
 pub mod win32;
 
@@ -58,6 +60,19 @@ pub fn set_punc_enabled(enabled: bool) {
     PUNC_ENABLED.store(enabled, Ordering::SeqCst);
     if let Err(e) = crate::Config::save_punc_enabled(enabled) {
         log::warn!("Failed to save punc_enabled: {}", e);
+    }
+}
+
+pub static SAVE_LOG_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn get_save_log_enabled() -> bool {
+    SAVE_LOG_ENABLED.load(Ordering::SeqCst)
+}
+
+pub fn set_save_log_enabled(enabled: bool) {
+    SAVE_LOG_ENABLED.store(enabled, Ordering::SeqCst);
+    if let Err(e) = crate::Config::save_save_log(enabled) {
+        log::warn!("Failed to save save_log: {}", e);
     }
 }
 

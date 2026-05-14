@@ -34,24 +34,20 @@ impl log::Log for CaptureLogger {
 }
 
 fn log_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| String::new());
-    if home.is_empty() {
-        std::path::PathBuf::from("/tmp/.evi.log")
-    } else {
-        std::path::Path::new(&home).join(".evi.log")
-    }
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".evi.log")
 }
 
 fn write_log_file(msg: &str) {
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
-        .write(true)
-        .truncate(true)
+        .append(true)
         .open(log_path())
     {
         let _ = writeln!(f, "{}", msg);
-        let _ = f.flush();
     }
 }
 

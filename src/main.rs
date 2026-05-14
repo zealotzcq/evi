@@ -68,7 +68,6 @@ struct Session {
     recording: AtomicBool,
     results: Mutex<Vec<SegmentResult>>,
     audio_seq: AtomicU64,
-    save_log: bool,
 }
 
 impl Session {
@@ -89,11 +88,6 @@ impl Session {
         let dr = DebugRefine::open(crate::models::refine_db_path().to_str().unwrap())?;
         let refine_mgr = RefineManager::new(cfg, punc)?;
 
-        if cfg.save_log {
-            let log_dir = PathBuf::from("log");
-            std::fs::create_dir_all(&log_dir).ok();
-        }
-
         let audio_source: Box<dyn AudioSource> =
             Box::new(CpalAudioSource::new(DEFAULT_SAMPLE_RATE)?);
         let text_session = vi::text::tsf::create_platform_session()?;
@@ -110,7 +104,6 @@ impl Session {
             recording: AtomicBool::new(false),
             results: Mutex::new(Vec::new()),
             audio_seq: AtomicU64::new(1),
-            save_log: cfg.save_log,
         })
     }
 
@@ -135,14 +128,8 @@ impl Session {
         let dr = DebugRefine::open(crate::models::refine_db_path().to_str().unwrap())?;
         let refine_mgr = RefineManager::new(_cfg, punc)?;
 
-        if _cfg.save_log {
-            let log_dir = PathBuf::from("log");
-            std::fs::create_dir_all(&log_dir).ok();
-        }
-
         let audio_source: Box<dyn AudioSource> =
             Box::new(CpalAudioSource::new(DEFAULT_SAMPLE_RATE)?);
-        let correction = FileCorrectionStore::new("refine_log")?;
 
         #[cfg(target_os = "macos")]
         let text_session = vi::text::macos::create_platform_session()?;
@@ -183,6 +170,8 @@ impl Session {
             PlatformTextSession::new(Box::new(SOut), Box::new(SObs))
         };
 
+        let correction = FileCorrectionStore::new("refine_log")?;
+
         Ok(Self {
             audio_source: Mutex::new(audio_source),
             text_session: Mutex::new(text_session),
@@ -194,7 +183,6 @@ impl Session {
             recording: AtomicBool::new(false),
             results: Mutex::new(Vec::new()),
             audio_seq: AtomicU64::new(1),
-            save_log: _cfg.save_log,
         })
     }
 
@@ -249,7 +237,7 @@ impl Session {
         debug!("Captured {:.1}s of audio", total_s);
 
         let seq = self.audio_seq.fetch_add(1, Ordering::Relaxed);
-        if self.save_log {
+        if vi::ui::get_save_log_enabled() {
             if let Err(e) = save_wav(&i16_samples, DEFAULT_SAMPLE_RATE, seq) {
                 warn!("Failed to save audio: {e}");
             }
@@ -309,7 +297,7 @@ impl Session {
 
         debug!("Refined: {}", final_text);
         log_event("REFINE_COMPLETE", &final_text);
-        if self.save_log {
+        if vi::ui::get_save_log_enabled() {
             use serde_json::json;
             let segments_json: Vec<_> = self
                 .results
@@ -470,6 +458,11 @@ fn days_to_date(d: u64) -> (u64, u64, u64) {
 
 #[cfg(target_os = "windows")]
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--refine-editor") {
+        return crate::ui::refine_editor::run_refine_editor();
+    }
+
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     vi::ui::log_capture::init_log_capture(log_buffer.clone());
 
@@ -508,6 +501,8 @@ fn main() -> Result<()> {
         );
         vi::ui::set_punc_enabled(cfg.punc_enabled);
         info!("Restored punc_enabled from config: {}", cfg.punc_enabled);
+        vi::ui::set_save_log_enabled(cfg.save_log);
+        info!("Restored save_log from config: {}", cfg.save_log);
     }
 
     {
@@ -870,6 +865,11 @@ enum MacEvent {
 
 #[cfg(target_os = "macos")]
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--refine-editor") {
+        return crate::ui::refine_editor::run_refine_editor();
+    }
+
     request_all_permissions()?;
 
     #[cfg(target_arch = "x86_64")]
@@ -921,6 +921,8 @@ fn main() -> Result<()> {
         );
         vi::ui::set_punc_enabled(cfg.punc_enabled);
         info!("Restored punc_enabled from config: {}", cfg.punc_enabled);
+        vi::ui::set_save_log_enabled(cfg.save_log);
+        info!("Restored save_log from config: {}", cfg.save_log);
     }
 
     if crate::models::find_model_base_dir().is_none() {
@@ -960,6 +962,10 @@ fn main() -> Result<()> {
     let punc_id = punc_item.id().clone();
     let set_key_item = MenuItem::new("设置 API Key", true, None);
     let set_key_id = set_key_item.id().clone();
+    let save_log_item = MenuItem::new("启用日志", true, None);
+    let save_log_id = save_log_item.id().clone();
+    let edit_db_item = MenuItem::new("体验优化官", true, None);
+    let edit_db_id = edit_db_item.id().clone();
 
     let tray: Arc<MacTray> = Arc::new(
         MacTray::new(
@@ -968,6 +974,8 @@ fn main() -> Result<()> {
             coze_refine_item,
             energy_gate_item,
             punc_item,
+            save_log_item,
+            edit_db_item,
             set_key_item,
         )
         .map_err(|e| anyhow::anyhow!("Failed to create tray: {}", e))?,
@@ -978,6 +986,7 @@ fn main() -> Result<()> {
         tray.update_refine_route(&vi::ui::get_refine_scheme(), has_key);
         tray.update_energy_gate(vi::ui::get_energy_gate_enabled());
         tray.update_punc(vi::ui::get_punc_enabled());
+        tray.update_save_log(vi::ui::get_save_log_enabled());
     }
 
     let menu_proxy = proxy.clone();
@@ -1005,6 +1014,16 @@ fn main() -> Result<()> {
         } else if event.id == set_key_id {
             vi::ui::api_key_dialog::request_api_key_dialog();
             let _ = menu_proxy.send_event(MacEvent::UpdateTray);
+        } else if event.id == save_log_id {
+            let current = vi::ui::get_save_log_enabled();
+            vi::ui::set_save_log_enabled(!current);
+            let _ = menu_proxy.send_event(MacEvent::UpdateTray);
+        } else if event.id == edit_db_id {
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = std::process::Command::new(exe)
+                    .arg("--refine-editor")
+                    .spawn();
+            }
         }
     }));
 
@@ -1065,6 +1084,7 @@ fn main() -> Result<()> {
                 tray.update_energy_gate(gate_enabled);
                 let punc_enabled = vi::ui::get_punc_enabled();
                 tray.update_punc(punc_enabled);
+                tray.update_save_log(vi::ui::get_save_log_enabled());
             }
 
             Event::UserEvent(MacEvent::Quit) => {
