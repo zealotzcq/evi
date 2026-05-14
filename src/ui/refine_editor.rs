@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::ui::refine_api::{AuditItem, AuditSubmit, MockRefineApi, RefineApi, RefineSubmit};
+use crate::ui::refine_api::{AuditItem, AuditSubmit, RefineApi, RefineSubmit};
 
 const THANK_YOU_MESSAGES: &[&str] = &[
     "感谢你为系统优化做出的贡献，每一次反馈都让我们变得更好！",
@@ -35,6 +35,7 @@ enum AuditState {
 struct RefineEditorApp {
     api: Box<dyn RefineApi>,
     uuid: String,
+    contribution: i32,
 
     tab: Tab,
     error_msg: Option<String>,
@@ -49,9 +50,17 @@ struct RefineEditorApp {
 
 impl RefineEditorApp {
     fn new(api: Box<dyn RefineApi>, uuid: String) -> Self {
+        let contribution = match api.get_user_profile(&uuid) {
+            Ok(p) => p.contribution,
+            Err(e) => {
+                log::warn!("获取用户资料失败: {}", e);
+                0
+            }
+        };
         let mut app = Self {
             api,
             uuid,
+            contribution,
             tab: Tab::Optimize,
             error_msg: None,
             entries: Vec::new(),
@@ -212,10 +221,10 @@ impl RefineEditorApp {
         }
     }
 
-    fn submit_audit(&mut self, record_id: String, approved: bool) {
+    fn submit_audit(&mut self, task_id: i64, approved: bool) {
         match self.api.submit_audit(AuditSubmit {
             uuid: self.uuid.clone(),
-            record_id,
+            task_id,
             approved,
         }) {
             Ok(resp) if resp.success => {
@@ -243,7 +252,14 @@ impl eframe::App for RefineEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
-                ui.heading("体验优化官");
+                ui.horizontal(|ui| {
+                    ui.heading("体验优化官");
+                    ui.label(
+                        egui::RichText::new(format!("贡献: {}", self.contribution))
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(100, 100, 100)),
+                    );
+                });
                 ui.separator();
 
                 ui.horizontal(|ui| {
@@ -434,7 +450,7 @@ impl RefineEditorApp {
                             )
                             .clicked()
                         {
-                            self.submit_audit(item.record_id.clone(), true);
+                            self.submit_audit(item.task_id, true);
                         }
                         if ui
                             .add(
@@ -446,7 +462,7 @@ impl RefineEditorApp {
                             )
                             .clicked()
                         {
-                            self.submit_audit(item.record_id.clone(), false);
+                            self.submit_audit(item.task_id, false);
                         }
                     });
                 });
@@ -532,7 +548,7 @@ pub fn run_refine_editor() -> Result<()> {
     log::info!("体验优化官 starting...");
 
     let uuid = crate::ui::refine_api::get_user_uuid().unwrap_or_default();
-    let api: Box<dyn RefineApi> = Box::new(MockRefineApi::new());
+    let api = crate::ui::refine_api::create_api();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

@@ -275,6 +275,8 @@ pub struct Config {
     pub energy_gate_enabled: bool,
     #[serde(default = "default_energy_gate_db_offset")]
     pub energy_gate_db_offset: f64,
+    #[serde(default)]
+    pub server_url: Option<String>,
 }
 
 fn default_true() -> bool {
