@@ -32,10 +32,11 @@ cp "${SCRIPT_DIR}/evi.ico" "${APP_DIR}/Contents/MacOS/"
 cp "${SCRIPT_DIR}/prefill_template.txt" "${APP_DIR}/Contents/MacOS/"
 cp "${SCRIPT_DIR}/system_prompt.txt" "${APP_DIR}/Contents/MacOS/"
 
-# ORT dylib -> MacOS/ort-dylib/ (same layout as dev)
+# ORT dylib -> MacOS/ort-dylib/ (only the actual dylib, not .dSYM)
+ORT_SRC="${SCRIPT_DIR}/ort-dylib/onnxruntime-osx-x86_64-1.24.2/lib"
 mkdir -p "${APP_DIR}/Contents/MacOS/ort-dylib"
-cp -R "${SCRIPT_DIR}/ort-dylib/onnxruntime-osx-x86_64-1.24.2" \
-    "${APP_DIR}/Contents/MacOS/ort-dylib/"
+cp "${ORT_SRC}/libonnxruntime.1.24.2.dylib" "${APP_DIR}/Contents/MacOS/ort-dylib/"
+ln -sf libonnxruntime.1.24.2.dylib "${APP_DIR}/Contents/MacOS/ort-dylib/libonnxruntime.dylib"
 
 # data directory
 mkdir -p "${APP_DIR}/Contents/MacOS/refine_log"

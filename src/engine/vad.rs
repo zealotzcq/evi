@@ -32,11 +32,11 @@ struct EnergyGate {
 }
 
 impl EnergyGate {
-    fn new(enabled: bool, db_offset: f64) -> Self {
+    fn new(enabled: bool, db_offset: f64, initial_reference: Option<f64>) -> Self {
         Self {
             enabled,
             db_offset,
-            reference_energy: None,
+            reference_energy: initial_reference,
             init_samples: Vec::new(),
             min_init_frames: 20,
             frames_below_threshold: 0,
@@ -126,6 +126,7 @@ impl VadEngine {
         model_dir: &Path,
         energy_gate_enabled: bool,
         energy_gate_db_offset: f64,
+        initial_reference: Option<f64>,
     ) -> Result<Self> {
         let model_path = if model_dir.join("model_quant.onnx").exists() {
             model_dir.join("model_quant.onnx")
@@ -179,12 +180,20 @@ impl VadEngine {
             session,
             cmvn,
             config: FbankConfig::default(),
-            energy_gate: EnergyGate::new(energy_gate_enabled, energy_gate_db_offset),
+            energy_gate: EnergyGate::new(
+                energy_gate_enabled,
+                energy_gate_db_offset,
+                initial_reference,
+            ),
         })
     }
 
     pub fn set_energy_gate_enabled(&mut self, enabled: bool) {
         self.energy_gate.set_enabled(enabled);
+    }
+
+    pub fn get_reference_energy(&self) -> Option<f64> {
+        self.energy_gate.reference_energy
     }
 
     pub fn detect(&mut self, pcm: &[f32]) -> Result<Vec<SpeechSegment>> {

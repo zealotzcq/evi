@@ -13,8 +13,8 @@ const ID_TRAY_ENERGY_GATE: usize = 1005;
 const ID_TRAY_PUNC: usize = 1009;
 const ID_TRAY_SET_KEY: usize = 1004;
 const ID_TRAY_EXIT: usize = 1002;
-const ID_TRAY_SAVE_LOG: usize = 1011;
 const ID_TRAY_EDIT_DB: usize = 1012;
+const ID_TRAY_PRIVACY: usize = 1013;
 
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 static TRAY_INSTALLED: AtomicBool = AtomicBool::new(false);
@@ -145,14 +145,17 @@ unsafe extern "system" fn subclass_wndproc(
                     let enabled = !crate::ui::get_punc_enabled();
                     crate::ui::set_punc_enabled(enabled);
                 }
-                ID_TRAY_SAVE_LOG => {
-                    let enabled = !crate::ui::get_save_log_enabled();
-                    crate::ui::set_save_log_enabled(enabled);
-                }
                 ID_TRAY_EDIT_DB => {
                     if let Ok(exe) = std::env::current_exe() {
                         let _ = std::process::Command::new(exe)
                             .arg("--refine-editor")
+                            .spawn();
+                    }
+                }
+                ID_TRAY_PRIVACY => {
+                    if let Ok(exe) = std::env::current_exe() {
+                        let _ = std::process::Command::new(exe)
+                            .arg("--privacy-dialog")
                             .spawn();
                     }
                 }
@@ -244,14 +247,17 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         PCWSTR(refine_remote_text.as_ptr()),
     );
 
-    let _ = AppendMenuW(
-        menu,
-        MF_STRING | MF_POPUP,
-        refine_sub.0 as usize,
-        PCWSTR(refine_text.as_ptr()),
-    );
+    if TRAY_DEBUG.load(Ordering::SeqCst) {
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING | MF_POPUP,
+            refine_sub.0 as usize,
+            PCWSTR(refine_text.as_ptr()),
+        );
+    } else {
+        let _ = DestroyMenu(refine_sub);
+    }
 
-    // 自适应能量门控
     let gate_text: Vec<u16> = "自适应能量门控\0".encode_utf16().collect();
     let gate_ptr = PCWSTR(gate_text.as_ptr());
     let gate_checked = crate::ui::get_energy_gate_enabled();
@@ -262,7 +268,6 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         gate_ptr,
     );
 
-    // 智能标点
     let punc_text: Vec<u16> = "智能标点\0".encode_utf16().collect();
     let punc_ptr = PCWSTR(punc_text.as_ptr());
     let punc_checked = crate::ui::get_punc_enabled();
@@ -273,51 +278,34 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         punc_ptr,
     );
 
+    if TRAY_DEBUG.load(Ordering::SeqCst) {
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+
+        let set_key_text: Vec<u16> = "设置 API Key\0".encode_utf16().collect();
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            ID_TRAY_SET_KEY,
+            PCWSTR(set_key_text.as_ptr()),
+        );
+    }
+
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
 
-    let set_key_text: Vec<u16> = "设置 API Key\0".encode_utf16().collect();
+    let edit_db_text: Vec<u16> = "帮助我们改进\0".encode_utf16().collect();
     let _ = AppendMenuW(
         menu,
-        MF_STRING,
-        ID_TRAY_SET_KEY,
-        PCWSTR(set_key_text.as_ptr()),
-    );
-
-    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-
-    let exp_text: Vec<u16> = "体验优化计划\0".encode_utf16().collect();
-    let exp_sub = match CreatePopupMenu() {
-        Ok(m) => m,
-        Err(_) => {
-            let _ = DestroyMenu(menu);
-            return;
-        }
-    };
-    let save_log_text: Vec<u16> = "启用日志\0".encode_utf16().collect();
-    let save_log_checked = crate::ui::get_save_log_enabled();
-    let _ = AppendMenuW(
-        exp_sub,
-        MF_STRING
-            | if save_log_checked {
-                MF_CHECKED
-            } else {
-                MF_STRING
-            },
-        ID_TRAY_SAVE_LOG,
-        PCWSTR(save_log_text.as_ptr()),
-    );
-    let edit_db_text: Vec<u16> = "体验优化官\0".encode_utf16().collect();
-    let _ = AppendMenuW(
-        exp_sub,
         MF_STRING,
         ID_TRAY_EDIT_DB,
         PCWSTR(edit_db_text.as_ptr()),
     );
+
+    let privacy_text: Vec<u16> = "隐私说明...\0".encode_utf16().collect();
     let _ = AppendMenuW(
         menu,
-        MF_STRING | MF_POPUP,
-        exp_sub.0 as usize,
-        PCWSTR(exp_text.as_ptr()),
+        MF_STRING,
+        ID_TRAY_PRIVACY,
+        PCWSTR(privacy_text.as_ptr()),
     );
 
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());

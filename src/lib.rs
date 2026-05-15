@@ -255,7 +255,7 @@ pub struct Config {
     pub refine_db_path: Option<String>,
     #[serde(default = "default_max_refine_ratio")]
     pub max_refine_ratio: f64,
-    #[serde(default = "default_false")]
+    #[serde(default = "default_true")]
     pub save_log: bool,
     #[serde(default = "default_false")]
     pub debug: bool,
@@ -276,7 +276,11 @@ pub struct Config {
     #[serde(default = "default_energy_gate_db_offset")]
     pub energy_gate_db_offset: f64,
     #[serde(default)]
+    pub energy_gate_reference: Option<f64>,
+    #[serde(default)]
     pub server_url: Option<String>,
+    #[serde(default = "default_false")]
+    pub privacy_acknowledged: bool,
 }
 
 fn default_true() -> bool {
@@ -444,6 +448,37 @@ impl Config {
         Ok(())
     }
 
+    pub fn save_energy_gate_reference(val: Option<f64>) -> Result<()> {
+        let config_path = Self::home_config_path();
+        if !config_path.exists() {
+            let exe_dir = get_exe_dir()?;
+            let exe_path = exe_dir.join("config.json");
+            if exe_path.exists() {
+                let raw = std::fs::read_to_string(&exe_path)?;
+                let _ = std::fs::write(&config_path, &raw);
+            }
+        }
+        let raw = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read {}", config_path.display()))?;
+        let mut json: Value = serde_json::from_str(&raw)
+            .with_context(|| format!("Failed to parse {}", config_path.display()))?;
+        if let Some(obj) = json.as_object_mut() {
+            match val {
+                Some(v) => {
+                    obj.insert("energy_gate_reference".to_string(), Value::from(v));
+                }
+                None => {
+                    obj.remove("energy_gate_reference");
+                }
+            }
+        }
+        let out =
+            serde_json::to_string_pretty(&json).with_context(|| "Failed to serialize config")?;
+        std::fs::write(&config_path, out)
+            .with_context(|| format!("Failed to write {}", config_path.display()))?;
+        Ok(())
+    }
+
     pub fn save_punc_enabled(enabled: bool) -> Result<()> {
         let config_path = Self::home_config_path();
         if !config_path.exists() {
@@ -515,6 +550,30 @@ impl Config {
                     obj.remove("model_base_dir");
                 }
             }
+        }
+        let out =
+            serde_json::to_string_pretty(&json).with_context(|| "Failed to serialize config")?;
+        std::fs::write(&config_path, out)
+            .with_context(|| format!("Failed to write {}", config_path.display()))?;
+        Ok(())
+    }
+
+    pub fn save_privacy_acknowledged(ack: bool) -> Result<()> {
+        let config_path = Self::home_config_path();
+        if !config_path.exists() {
+            let exe_dir = get_exe_dir()?;
+            let exe_path = exe_dir.join("config.json");
+            if exe_path.exists() {
+                let raw = std::fs::read_to_string(&exe_path)?;
+                let _ = std::fs::write(&config_path, &raw);
+            }
+        }
+        let raw = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read {}", config_path.display()))?;
+        let mut json: Value = serde_json::from_str(&raw)
+            .with_context(|| format!("Failed to parse {}", config_path.display()))?;
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("privacy_acknowledged".to_string(), Value::Bool(ack));
         }
         let out =
             serde_json::to_string_pretty(&json).with_context(|| "Failed to serialize config")?;

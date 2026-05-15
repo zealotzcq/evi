@@ -1,5 +1,6 @@
 pub mod api_key_dialog;
 pub mod log_capture;
+pub mod privacy_dialog;
 pub mod refine_api;
 pub mod refine_editor;
 #[cfg(target_os = "windows")]

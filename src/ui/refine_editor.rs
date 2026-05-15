@@ -4,14 +4,78 @@ use std::sync::Arc;
 use crate::ui::refine_api::{AuditItem, AuditSubmit, RefineApi, RefineSubmit};
 
 const THANK_YOU_MESSAGES: &[&str] = &[
-    "感谢你为系统优化做出的贡献，每一次反馈都让我们变得更好！",
-    "太棒了！你的审阅帮助了更多人获得更准确的识别结果。",
-    "谢谢你的用心审核，你的参与让语音输入更智能！",
-    "又一条优化完成！感谢你与我们一起打磨产品体验。",
-    "你的每一份贡献都很珍贵，感谢让系统变得更优秀！",
+    "太棒了！你刚刚帮助提升了语音识别的准确度，千万人受益！",
+    "你的审阅让更多用户享受到了更精准的文字输入体验！",
+    "很厉害！又一条高质量的优化建议，系统因你而进步！",
+    "感谢你的专业眼光！你的每一次审阅都在推动技术向前！",
+    "你的贡献正在让语音输入变得更自然、更智能！",
+    "又一个值得骄傲的贡献！你是最棒的体验优化官！",
+    "你的细致审核是产品不断进化的动力，为你点赞！",
+    "优秀！你正在帮助构建更好的语音技术生态系统！",
+    "这份认真令人感动！你的贡献让每个使用语音输入的人都受益！",
+    "完美！你的专业判断让 AI 变得更加可靠和智能！",
 ];
 
-const MAX_DISPLAY: usize = 10;
+const PRIVACY_NOTICE: &str = "\
+• 对话记录仅保存在本地，不会自动上传
+• 你可以随时查看、删除任意一条记录
+• 上传由你手动选择，仅提交你确认的对话条目
+• 通过匿名随机序列标识用户身份，不收集任何个人信息
+• 数据传输全程加密，服务器仅存储提交的内容";
+
+const USAGE_DESCRIPTION: &str = "\
+【我的对话】标签页
+选择一条识别记录，修改为更准确的文本后提交。你的校正将帮助系统学习正确的表达方式。
+【审核助手】标签页
+审核其他用户提交的校正结果，点击「通过」或「拒绝」帮助筛选高质量数据。
+每完成一次提交或审核，你的贡献值都会增加。";
+
+const LEVEL_TITLES: &[(i32, &str, &str)] = &[
+    (0, "新手体验官", "🌱"),
+    (5, "初级体验官", "🌿"),
+    (20, "中级体验官", "🌳"),
+    (50, "高级体验官", "⭐"),
+    (100, "资深体验官", "🌟"),
+    (200, "首席体验官", "💎"),
+    (500, "传奇体验官", "🏆"),
+];
+
+fn get_level(contribution: i32) -> (usize, &'static str, &'static str) {
+    let mut idx = 0;
+    for (i, &(threshold, _, _)) in LEVEL_TITLES.iter().enumerate() {
+        if contribution >= threshold {
+            idx = i;
+        }
+    }
+    (idx, LEVEL_TITLES[idx].1, LEVEL_TITLES[idx].2)
+}
+
+fn get_next_level_progress(contribution: i32) -> (f32, i32) {
+    let (idx, _, _) = get_level(contribution);
+    let current_threshold = LEVEL_TITLES[idx].0;
+    let next_threshold = if idx + 1 < LEVEL_TITLES.len() {
+        LEVEL_TITLES[idx + 1].0
+    } else {
+        LEVEL_TITLES[idx].0
+    };
+    if next_threshold == current_threshold {
+        return (1.0, 0);
+    }
+    let progress =
+        (contribution - current_threshold) as f32 / (next_threshold - current_threshold) as f32;
+    (progress.min(1.0), next_threshold - contribution)
+}
+
+const SUBMIT_THANK_YOU: &[&str] = &[
+    "感谢你的校正建议！这将帮助系统识别得更好。",
+    "太好了！你刚刚为提升语音识别准确率做出了贡献！",
+    "你的修改非常到位！系统会从你的反馈中不断学习进步。",
+    "又一条高质量校正！你正在让语音输入变得更智能！",
+    "优秀的建议！你的贡献正在帮助千万人获得更好的输入体验！",
+    "精准的修改！你的专业反馈是系统进步的宝贵财富！",
+];
+
+const MAX_DISPLAY: usize = 5;
 
 #[derive(Debug, Clone)]
 struct RefineEntry {
@@ -32,10 +96,17 @@ enum AuditState {
     Error(String),
 }
 
+enum SubmitFeedback {
+    None,
+    ThankYou(String),
+}
+
 struct RefineEditorApp {
     api: Box<dyn RefineApi>,
     uuid: String,
     contribution: i32,
+    save_log: bool,
+    base_height_set: bool,
 
     tab: Tab,
     error_msg: Option<String>,
@@ -46,6 +117,7 @@ struct RefineEditorApp {
     edit_text: String,
 
     audit_state: AuditState,
+    submit_feedback: SubmitFeedback,
 }
 
 impl RefineEditorApp {
@@ -57,10 +129,13 @@ impl RefineEditorApp {
                 0
             }
         };
+        let save_log = crate::Config::load().map(|c| c.save_log).unwrap_or(true);
         let mut app = Self {
             api,
             uuid,
             contribution,
+            save_log,
+            base_height_set: false,
             tab: Tab::Optimize,
             error_msg: None,
             entries: Vec::new(),
@@ -68,6 +143,7 @@ impl RefineEditorApp {
             original_display: String::new(),
             edit_text: String::new(),
             audit_state: AuditState::Idle,
+            submit_feedback: SubmitFeedback::None,
         };
         app.reload();
         app.load_audit_item();
@@ -197,7 +273,16 @@ impl RefineEditorApp {
             refined: new_refined.to_string(),
         }) {
             Ok(resp) => {
-                if !resp.success {
+                if resp.success {
+                    self.contribution += 1;
+                    let idx = std::time::SystemTime::now()
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as usize
+                        % SUBMIT_THANK_YOU.len();
+                    self.submit_feedback =
+                        SubmitFeedback::ThankYou(SUBMIT_THANK_YOU[idx].to_string());
+                } else {
                     log::warn!("submit_refine API returned failure: {:?}", resp.message);
                 }
             }
@@ -254,28 +339,216 @@ impl eframe::App for RefineEditorApp {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     ui.heading("体验优化官");
+                    let (_, title, icon) = get_level(self.contribution);
                     ui.label(
-                        egui::RichText::new(format!("贡献: {}", self.contribution))
+                        egui::RichText::new(format!("{} {}", icon, title))
                             .size(14.0)
-                            .color(egui::Color32::from_rgb(100, 100, 100)),
+                            .color(egui::Color32::from_rgb(180, 130, 20)),
                     );
                 });
+
+                ui.add_space(2.0);
+
+                let (progress, remaining) = get_next_level_progress(self.contribution);
+                let bar_w = ui.available_width().min(320.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("贡献值: {}", self.contribution))
+                            .size(13.0)
+                            .color(egui::Color32::from_rgb(100, 100, 100)),
+                    );
+                    if remaining > 0 {
+                        ui.label(
+                            egui::RichText::new(format!("(距下一级还差 {} 次)", remaining))
+                                .size(12.0)
+                                .color(egui::Color32::from_rgb(140, 140, 140)),
+                        );
+                    }
+                });
+
+                let progress_color = egui::Color32::from_rgb(76, 175, 80);
+                let bg_color = egui::Color32::from_rgb(230, 230, 230);
+                egui::Frame::canvas(ui.style())
+                    .inner_margin(egui::Margin::same(0))
+                    .show(ui, |ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(bar_w, 8.0), egui::Sense::hover());
+                        if ui.is_rect_visible(rect) {
+                            ui.painter().rect_filled(rect, 4.0, bg_color);
+                            let filled_w = rect.width() * progress;
+                            if filled_w > 0.0 {
+                                let filled_rect = egui::Rect::from_min_max(
+                                    rect.min,
+                                    egui::pos2(rect.min.x + filled_w, rect.max.y),
+                                );
+                                ui.painter().rect_filled(filled_rect, 4.0, progress_color);
+                            }
+                        }
+                    });
+
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    let col_w = (ui.available_width() - 8.0) / 2.0;
+                    ui.vertical(|ui| {
+                        ui.set_width(col_w);
+                        egui::Frame::group(ui.style())
+                            .inner_margin(10)
+                            .fill(egui::Color32::from_rgb(245, 255, 245))
+                            .show(ui, |ui| {
+                                egui::Frame::new()
+                                    .inner_margin(egui::Margin::symmetric(8, 3))
+                                    .corner_radius(egui::CornerRadius::same(4))
+                                    .fill(egui::Color32::from_rgb(46, 139, 87))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new("🔒 隐私保护承诺")
+                                                .size(13.0)
+                                                .color(egui::Color32::WHITE),
+                                        );
+                                    });
+                                ui.add_space(6.0);
+                                ui.label(
+                                    egui::RichText::new(PRIVACY_NOTICE)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(50, 50, 50)),
+                                );
+                                ui.add_space(6.0);
+                                let mut save_log = self.save_log;
+                                ui.checkbox(&mut save_log, "记录对话（仅本地保存，不上传）");
+                                if save_log != self.save_log {
+                                    self.save_log = save_log;
+                                    crate::ui::set_save_log_enabled(save_log);
+                                }
+                            });
+                    });
+                    ui.vertical(|ui| {
+                        ui.set_width(col_w);
+                        egui::Frame::group(ui.style())
+                            .inner_margin(10)
+                            .fill(egui::Color32::from_rgb(240, 245, 255))
+                            .show(ui, |ui| {
+                                egui::Frame::new()
+                                    .inner_margin(egui::Margin::symmetric(8, 3))
+                                    .corner_radius(egui::CornerRadius::same(4))
+                                    .fill(egui::Color32::from_rgb(33, 150, 243))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new("📖 使用说明")
+                                                .size(13.0)
+                                                .color(egui::Color32::WHITE),
+                                        );
+                                    });
+                                ui.add_space(6.0);
+                                ui.label(
+                                    egui::RichText::new(USAGE_DESCRIPTION)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(50, 50, 50)),
+                                );
+                            });
+                    });
+                });
+
                 ui.separator();
 
                 ui.horizontal(|ui| {
                     let opt_active = matches!(self.tab, Tab::Optimize);
                     let audit_active = matches!(self.tab, Tab::Audit);
-                    if ui.selectable_label(opt_active, "我的对话").clicked() {
+                    let tab_w = (ui.available_width() - 4.0) / 2.0;
+                    let opt_btn =
+                        egui::Button::new(egui::RichText::new("我的对话").size(14.0).color(
+                            if opt_active {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::from_rgb(80, 80, 80)
+                            },
+                        ))
+                        .min_size(egui::vec2(tab_w, 32.0))
+                        .fill(if opt_active {
+                            egui::Color32::from_rgb(33, 150, 243)
+                        } else {
+                            egui::Color32::from_rgb(230, 230, 230)
+                        })
+                        .stroke(egui::Stroke::new(
+                            if opt_active { 1.5 } else { 0.5 },
+                            if opt_active {
+                                egui::Color32::from_rgb(25, 118, 210)
+                            } else {
+                                egui::Color32::from_rgb(180, 180, 180)
+                            },
+                        ))
+                        .corner_radius(egui::CornerRadius::same(4));
+                    if ui.add(opt_btn).clicked() {
                         self.tab = Tab::Optimize;
                     }
-                    if ui.selectable_label(audit_active, "审核助手").clicked() {
+                    let audit_btn =
+                        egui::Button::new(egui::RichText::new("审核助手").size(14.0).color(
+                            if audit_active {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::from_rgb(80, 80, 80)
+                            },
+                        ))
+                        .min_size(egui::vec2(tab_w, 32.0))
+                        .fill(if audit_active {
+                            egui::Color32::from_rgb(33, 150, 243)
+                        } else {
+                            egui::Color32::from_rgb(230, 230, 230)
+                        })
+                        .stroke(egui::Stroke::new(
+                            if audit_active { 1.5 } else { 0.5 },
+                            if audit_active {
+                                egui::Color32::from_rgb(25, 118, 210)
+                            } else {
+                                egui::Color32::from_rgb(180, 180, 180)
+                            },
+                        ))
+                        .corner_radius(egui::CornerRadius::same(4));
+                    if ui.add(audit_btn).clicked() {
                         self.tab = Tab::Audit;
                     }
                 });
                 ui.separator();
 
+                if let SubmitFeedback::ThankYou(_) = self.submit_feedback {
+                    let msg = match &self.submit_feedback {
+                        SubmitFeedback::ThankYou(m) => m.clone(),
+                        _ => String::new(),
+                    };
+                    egui::Frame::group(ui.style())
+                        .inner_margin(8)
+                        .fill(egui::Color32::from_rgb(230, 255, 230))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                egui::Frame::new()
+                                    .inner_margin(egui::Margin::symmetric(8, 3))
+                                    .corner_radius(egui::CornerRadius::same(4))
+                                    .fill(egui::Color32::from_rgb(33, 150, 243))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new("📖 使用说明")
+                                                .size(13.0)
+                                                .color(egui::Color32::WHITE),
+                                        );
+                                    });
+                                ui.label(
+                                    egui::RichText::new(&msg)
+                                        .size(13.0)
+                                        .color(egui::Color32::from_rgb(30, 100, 50)),
+                                );
+                            });
+                        });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui.small_button("关闭").clicked() {
+                            self.submit_feedback = SubmitFeedback::None;
+                        }
+                    });
+                    ui.add_space(2.0);
+                }
+
                 match self.tab {
-                    Tab::Optimize => self.show_optimize_page(ui),
+                    Tab::Optimize => self.show_optimize_page(ui, ctx),
                     Tab::Audit => self.show_audit_page(ui),
                 }
 
@@ -288,9 +561,21 @@ impl eframe::App for RefineEditorApp {
 }
 
 impl RefineEditorApp {
-    fn show_optimize_page(&mut self, ui: &mut egui::Ui) {
-        let available = ui.available_height();
-        let list_h = (available * 0.50).max(100.0);
+    fn show_optimize_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let has_selection = self.selected_id.is_some();
+        if has_selection && !self.base_height_set {
+            self.base_height_set = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(720.0, 780.0)));
+        } else if !has_selection && self.base_height_set {
+            self.base_height_set = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(720.0, 640.0)));
+        }
+
+        let list_h = if has_selection {
+            180.0
+        } else {
+            (ui.available_height() * 0.50).max(100.0)
+        };
 
         let display: Vec<(i64, String, bool)> = self
             .display_entries()
@@ -303,54 +588,75 @@ impl RefineEditorApp {
             .outer_margin(egui::Margin::same(0))
             .show(ui, |ui| {
                 ui.set_min_height(list_h);
-                egui::ScrollArea::vertical()
-                    .max_height(list_h)
-                    .show(ui, |ui| {
-                        for (id, original, is_unrefined) in &display {
-                            let is_selected = self.selected_id == Some(*id);
-                            egui::Frame::group(ui.style())
-                                .fill(if is_selected {
-                                    egui::Color32::from_rgb(220, 235, 255)
-                                } else {
-                                    egui::Color32::TRANSPARENT
-                                })
-                                .inner_margin(egui::Margin::same(4))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let resp = ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(original).size(14.0),
-                                            )
-                                            .sense(egui::Sense::click())
-                                            .selectable(false),
-                                        );
-                                        if resp.clicked() && *is_unrefined {
-                                            self.selected_id = Some(*id);
-                                            self.original_display = original.clone();
-                                            self.edit_text = original.clone();
-                                        }
-
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui.small_button("X").clicked() {
-                                                    self.delete_entry(*id);
-                                                }
-                                                if !is_unrefined {
-                                                    ui.label(
-                                                        egui::RichText::new("已提交")
-                                                            .color(egui::Color32::from_rgb(
-                                                                46, 139, 87,
-                                                            ))
-                                                            .size(13.0),
-                                                    );
-                                                }
-                                            },
-                                        );
-                                    });
-                                });
-                        }
+                if display.is_empty() {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(
+                            egui::RichText::new("暂无记录")
+                                .color(egui::Color32::GRAY)
+                                .size(14.0),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new("启用「记录对话」后，你的识别记录会出现在这里")
+                                .color(egui::Color32::from_rgb(150, 150, 150))
+                                .size(12.0),
+                        );
+                        ui.label(
+                            egui::RichText::new("所有数据仅保存在本地，你随时可以查看和删除")
+                                .color(egui::Color32::from_rgb(150, 150, 150))
+                                .size(12.0),
+                        );
                     });
+                } else {
+                    egui::ScrollArea::vertical()
+                        .max_height(list_h)
+                        .show(ui, |ui| {
+                            for (id, original, is_unrefined) in &display {
+                                let is_selected = self.selected_id == Some(*id);
+                                let frame = egui::Frame::group(ui.style())
+                                    .fill(if is_selected {
+                                        egui::Color32::from_rgb(220, 235, 255)
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    })
+                                    .inner_margin(egui::Margin::same(4))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new(original).size(14.0));
+
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui.small_button("删除").clicked() {
+                                                        self.delete_entry(*id);
+                                                    }
+                                                    if !is_unrefined {
+                                                        ui.label(
+                                                            egui::RichText::new("已提交")
+                                                                .color(egui::Color32::from_rgb(
+                                                                    46, 139, 87,
+                                                                ))
+                                                                .size(13.0),
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        });
+                                    });
+                                let click_resp = ui.interact(
+                                    frame.response.rect,
+                                    frame.response.id.with("click"),
+                                    egui::Sense::click(),
+                                );
+                                if click_resp.clicked() && *is_unrefined {
+                                    self.selected_id = Some(*id);
+                                    self.original_display = original.clone();
+                                    self.edit_text = original.clone();
+                                }
+                            }
+                        });
+                }
             });
 
         ui.add_space(8.0);
@@ -369,16 +675,33 @@ impl RefineEditorApp {
                     );
 
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new("优化为:").strong());
+                    ui.label(egui::RichText::new("校正为:").strong());
                     let edit_resp = ui.add(
                         egui::TextEdit::multiline(&mut self.edit_text)
                             .desired_width(f32::INFINITY)
                             .desired_rows(2),
                     );
 
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.button("提交优化").clicked() {
+                        ui.label(
+                            egui::RichText::new("提示：仅会上传你主动提交的校正条目")
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(120, 120, 120)),
+                        );
+                    });
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("提交校正").color(egui::Color32::WHITE),
+                                )
+                                .fill(egui::Color32::from_rgb(46, 139, 87)),
+                            )
+                            .clicked()
+                        {
                             let text = self.edit_text.trim().to_string();
                             if !text.is_empty() {
                                 self.submit_refine(id, &text);
@@ -393,9 +716,11 @@ impl RefineEditorApp {
                     });
                 } else {
                     ui.vertical_centered(|ui| {
-                        ui.add_space(16.0);
+                        ui.add_space(6.0);
                         ui.label(
-                            egui::RichText::new("选择一条记录进行优化").color(egui::Color32::GRAY),
+                            egui::RichText::new("你的修改帮助系统学习，每次提交都会增加贡献值")
+                                .size(12.0)
+                                .color(egui::Color32::from_rgb(150, 150, 150)),
                         );
                     });
                 }
@@ -406,10 +731,23 @@ impl RefineEditorApp {
         match &self.audit_state {
             AuditState::Idle => {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.label(egui::RichText::new("暂无待审核内容").color(egui::Color32::GRAY));
-                    ui.add_space(10.0);
-                    if ui.button("获取待审核内容").clicked() {
+                    ui.add_space(30.0);
+                    ui.label(
+                        egui::RichText::new("审核其他用户的校对结果，帮助筛选高质量数据")
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(80, 80, 80)),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("每次审核都会增加你的贡献值和等级")
+                            .size(12.0)
+                            .color(egui::Color32::GRAY),
+                    );
+                    ui.add_space(16.0);
+                    if ui
+                        .add(egui::Button::new("获取待审核内容").min_size(egui::vec2(160.0, 36.0)))
+                        .clicked()
+                    {
                         self.load_audit_item();
                     }
                 });
@@ -420,7 +758,7 @@ impl RefineEditorApp {
                 egui::Frame::group(ui.style())
                     .inner_margin(10)
                     .show(ui, |ui| {
-                        ui.label(egui::RichText::new("润色前:").strong());
+                        ui.label(egui::RichText::new("校正前:").strong());
                         ui.add(
                             egui::TextEdit::multiline(&mut item.original.as_str())
                                 .desired_width(f32::INFINITY)
@@ -428,7 +766,7 @@ impl RefineEditorApp {
                                 .interactive(false),
                         );
                         ui.add_space(8.0);
-                        ui.label(egui::RichText::new("润色后:").strong());
+                        ui.label(egui::RichText::new("校正后:").strong());
                         ui.add(
                             egui::TextEdit::multiline(&mut item.refined.as_str())
                                 .desired_width(f32::INFINITY)
@@ -437,16 +775,25 @@ impl RefineEditorApp {
                         );
                     });
 
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("你的审核帮助系统学习什么样的识别结果是好的")
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(120, 120, 120)),
+                    );
+                });
+
                 ui.add_space(12.0);
                 ui.vertical_centered(|ui| {
                     ui.horizontal(|ui| {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    egui::RichText::new("通过").color(egui::Color32::WHITE),
+                                    egui::RichText::new("✓ 通过").color(egui::Color32::WHITE),
                                 )
                                 .fill(egui::Color32::from_rgb(46, 139, 87))
-                                .min_size(egui::vec2(100.0, 36.0)),
+                                .min_size(egui::vec2(120.0, 40.0)),
                             )
                             .clicked()
                         {
@@ -455,10 +802,10 @@ impl RefineEditorApp {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    egui::RichText::new("拒绝").color(egui::Color32::WHITE),
+                                    egui::RichText::new("✗ 拒绝").color(egui::Color32::WHITE),
                                 )
                                 .fill(egui::Color32::from_rgb(200, 60, 60))
-                                .min_size(egui::vec2(100.0, 36.0)),
+                                .min_size(egui::vec2(120.0, 40.0)),
                             )
                             .clicked()
                         {
@@ -469,12 +816,22 @@ impl RefineEditorApp {
             }
             AuditState::ThankYou(msg) => {
                 let msg = msg.clone();
+                let (_, title, icon) = get_level(self.contribution);
                 ui.vertical_centered(|ui| {
                     ui.add_space(30.0);
                     ui.label(
                         egui::RichText::new("审核已提交")
                             .size(20.0)
                             .color(egui::Color32::from_rgb(46, 139, 87)),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "当前贡献: {} | {} {}",
+                            self.contribution, icon, title
+                        ))
+                        .size(14.0)
+                        .color(egui::Color32::from_rgb(180, 130, 20)),
                     );
                     ui.add_space(12.0);
                     ui.label(
@@ -551,10 +908,11 @@ pub fn run_refine_editor() -> Result<()> {
     let api = crate::ui::refine_api::create_api();
 
     let native_options = eframe::NativeOptions {
+        centered: true,
         viewport: egui::ViewportBuilder::default()
             .with_title("体验优化官")
-            .with_inner_size([700.0, 560.0])
-            .with_min_inner_size([500.0, 400.0]),
+            .with_inner_size([720.0, 640.0])
+            .with_min_inner_size([520.0, 460.0]),
         ..Default::default()
     };
 

@@ -79,7 +79,12 @@ impl Session {
         let punc_dir = crate::models::punc_model_dir(&base);
 
         debug!("Loading VAD model from {}...", vad_dir.display());
-        let vad = VadEngine::new(&vad_dir, cfg.energy_gate_enabled, cfg.energy_gate_db_offset)?;
+        let vad = VadEngine::new(
+            &vad_dir,
+            cfg.energy_gate_enabled,
+            cfg.energy_gate_db_offset,
+            cfg.energy_gate_reference,
+        )?;
         debug!("Loading ASR model from {}...", asr_dir.display());
         let asr = AsrEngine::new(&asr_dir)?;
         debug!("Loading Punc model from {}...", punc_dir.display());
@@ -119,6 +124,7 @@ impl Session {
             &vad_dir,
             _cfg.energy_gate_enabled,
             _cfg.energy_gate_db_offset,
+            _cfg.energy_gate_reference,
         )?;
         debug!("Loading ASR model from {}...", asr_dir.display());
         let asr = AsrEngine::new(&asr_dir)?;
@@ -462,6 +468,9 @@ fn main() -> Result<()> {
     if args.iter().any(|a| a == "--refine-editor") {
         return crate::ui::refine_editor::run_refine_editor();
     }
+    if args.iter().any(|a| a == "--privacy-dialog") {
+        return crate::ui::privacy_dialog::run_privacy_dialog();
+    }
 
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     vi::ui::log_capture::init_log_capture(log_buffer.clone());
@@ -485,6 +494,12 @@ fn main() -> Result<()> {
     }
 
     if let Ok(cfg) = Config::load() {
+        if !cfg.privacy_acknowledged {
+            let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("evi"));
+            let _ = std::process::Command::new(exe)
+                .arg("--privacy-dialog")
+                .status();
+        }
         let scheme = if cfg.refine_scheme != "default" {
             cfg.refine_scheme.clone()
         } else if cfg.llm_remote_enabled {
@@ -670,6 +685,11 @@ fn main() -> Result<()> {
         if let Some(sess) = sess {
             if sess.recording.load(Ordering::SeqCst) {
                 sess.audio_source.lock().stop().ok();
+            }
+            if let Some(ref_e) = sess.vad.lock().get_reference_energy() {
+                if let Err(e) = Config::save_energy_gate_reference(Some(ref_e)) {
+                    log::warn!("Failed to save energy_gate_reference: {}", e);
+                }
             }
             sess.check_corrections();
         }
@@ -869,6 +889,9 @@ fn main() -> Result<()> {
     if args.iter().any(|a| a == "--refine-editor") {
         return crate::ui::refine_editor::run_refine_editor();
     }
+    if args.iter().any(|a| a == "--privacy-dialog") {
+        return crate::ui::privacy_dialog::run_privacy_dialog();
+    }
 
     request_all_permissions()?;
 
@@ -923,6 +946,12 @@ fn main() -> Result<()> {
         info!("Restored punc_enabled from config: {}", cfg.punc_enabled);
         vi::ui::set_save_log_enabled(cfg.save_log);
         info!("Restored save_log from config: {}", cfg.save_log);
+        if !cfg.privacy_acknowledged {
+            let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("evi"));
+            let _ = std::process::Command::new(exe)
+                .arg("--privacy-dialog")
+                .status();
+        }
     }
 
     if crate::models::find_model_base_dir().is_none() {
@@ -962,9 +991,7 @@ fn main() -> Result<()> {
     let punc_id = punc_item.id().clone();
     let set_key_item = MenuItem::new("设置 API Key", true, None);
     let set_key_id = set_key_item.id().clone();
-    let save_log_item = MenuItem::new("启用日志", true, None);
-    let save_log_id = save_log_item.id().clone();
-    let edit_db_item = MenuItem::new("体验优化官", true, None);
+    let edit_db_item = MenuItem::new("帮助我们改进", true, None);
     let edit_db_id = edit_db_item.id().clone();
 
     let tray: Arc<MacTray> = Arc::new(
@@ -974,9 +1001,9 @@ fn main() -> Result<()> {
             coze_refine_item,
             energy_gate_item,
             punc_item,
-            save_log_item,
             edit_db_item,
             set_key_item,
+            cfg.debug,
         )
         .map_err(|e| anyhow::anyhow!("Failed to create tray: {}", e))?,
     );
@@ -986,7 +1013,6 @@ fn main() -> Result<()> {
         tray.update_refine_route(&vi::ui::get_refine_scheme(), has_key);
         tray.update_energy_gate(vi::ui::get_energy_gate_enabled());
         tray.update_punc(vi::ui::get_punc_enabled());
-        tray.update_save_log(vi::ui::get_save_log_enabled());
     }
 
     let menu_proxy = proxy.clone();
@@ -1013,10 +1039,6 @@ fn main() -> Result<()> {
             let _ = menu_proxy.send_event(MacEvent::UpdateTray);
         } else if event.id == set_key_id {
             vi::ui::api_key_dialog::request_api_key_dialog();
-            let _ = menu_proxy.send_event(MacEvent::UpdateTray);
-        } else if event.id == save_log_id {
-            let current = vi::ui::get_save_log_enabled();
-            vi::ui::set_save_log_enabled(!current);
             let _ = menu_proxy.send_event(MacEvent::UpdateTray);
         } else if event.id == edit_db_id {
             if let Ok(exe) = std::env::current_exe() {
@@ -1084,13 +1106,17 @@ fn main() -> Result<()> {
                 tray.update_energy_gate(gate_enabled);
                 let punc_enabled = vi::ui::get_punc_enabled();
                 tray.update_punc(punc_enabled);
-                tray.update_save_log(vi::ui::get_save_log_enabled());
             }
 
             Event::UserEvent(MacEvent::Quit) => {
                 info!("Shutting down...");
                 if session.recording.load(Ordering::SeqCst) {
                     session.audio_source.lock().stop().ok();
+                }
+                if let Some(ref_e) = session.vad.lock().get_reference_energy() {
+                    if let Err(e) = Config::save_energy_gate_reference(Some(ref_e)) {
+                        log::warn!("Failed to save energy_gate_reference: {}", e);
+                    }
                 }
                 session.check_corrections();
                 *control_flow = ControlFlow::Exit;
@@ -1106,6 +1132,14 @@ fn main() -> Result<()> {
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--refine-editor") {
+        return crate::ui::refine_editor::run_refine_editor();
+    }
+    if args.iter().any(|a| a == "--privacy-dialog") {
+        return crate::ui::privacy_dialog::run_privacy_dialog();
+    }
+
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     vi::ui::log_capture::init_log_capture(log_buffer.clone());
 
@@ -1114,6 +1148,15 @@ fn main() -> Result<()> {
         .unwrap();
 
     info!("EVI Voice Input Method starting...");
+
+    if let Ok(cfg) = Config::load() {
+        if !cfg.privacy_acknowledged {
+            let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("evi"));
+            let _ = std::process::Command::new(exe)
+                .arg("--privacy-dialog")
+                .status();
+        }
+    }
 
     let cfg = Config::load()?;
     let session = Arc::new(Session::new(&cfg)?);
@@ -1159,6 +1202,11 @@ fn main() -> Result<()> {
     info!("Shutting down...");
     if session.recording.load(Ordering::SeqCst) {
         session.audio_source.lock().stop().ok();
+    }
+    if let Some(ref_e) = session.vad.lock().get_reference_energy() {
+        if let Err(e) = Config::save_energy_gate_reference(Some(ref_e)) {
+            log::warn!("Failed to save energy_gate_reference: {}", e);
+        }
     }
     std::thread::sleep(Duration::from_secs(3));
     session.check_corrections();
