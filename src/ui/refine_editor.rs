@@ -109,6 +109,7 @@ struct RefineEditorApp {
     save_log: bool,
     base_height_set: bool,
     focus_requested: bool,
+    ctx: Option<egui::Context>,
 
     tab: Tab,
     error_msg: Option<String>,
@@ -139,6 +140,7 @@ impl RefineEditorApp {
             save_log,
             base_height_set: false,
             focus_requested: false,
+            ctx: None,
             tab: Tab::Optimize,
             error_msg: None,
             entries: Vec::new(),
@@ -271,8 +273,11 @@ impl RefineEditorApp {
             refined: new_refined.to_string(),
         }) {
             Ok(resp) => {
+                self.contribution += 1;
+                if let Some(ctx) = &self.ctx {
+                    ctx.request_repaint();
+                }
                 if resp.success {
-                    self.contribution += 1;
                     let idx = std::time::SystemTime::now()
                         .duration_since(std::time::SystemTime::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -285,6 +290,10 @@ impl RefineEditorApp {
                 }
             }
             Err(e) => {
+                self.contribution += 1;
+                if let Some(ctx) = &self.ctx {
+                    ctx.request_repaint();
+                }
                 log::warn!("submit_refine API error: {}", e);
             }
         }
@@ -312,6 +321,9 @@ impl RefineEditorApp {
         }) {
             Ok(resp) if resp.success => {
                 self.contribution += 1;
+                if let Some(ctx) = &self.ctx {
+                    ctx.request_repaint();
+                }
                 let idx = std::time::SystemTime::now()
                     .duration_since(std::time::SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -334,6 +346,9 @@ impl RefineEditorApp {
 
 impl eframe::App for RefineEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.ctx.is_none() {
+            self.ctx = Some(ctx.clone());
+        }
         if !self.focus_requested {
             self.focus_requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
