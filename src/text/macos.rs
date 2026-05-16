@@ -10,10 +10,10 @@ use log::info;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Flag to suppress rdev events while we're injecting text (avoid echo).
+/// Flag to suppress events while we're injecting text (avoid echo).
 static INJECTING: AtomicBool = AtomicBool::new(false);
 
-/// Returns true while text injection is in progress (rdev listener should ignore events).
+/// Returns true while text injection is in progress (listeners should ignore events).
 pub fn is_injecting() -> bool {
     INJECTING.load(Ordering::SeqCst)
 }

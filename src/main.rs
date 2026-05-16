@@ -993,6 +993,8 @@ fn main() -> Result<()> {
     let set_key_id = set_key_item.id().clone();
     let edit_db_item = MenuItem::new("帮助我们改进", true, None);
     let edit_db_id = edit_db_item.id().clone();
+    let privacy_item = MenuItem::new("隐私说明...", true, None);
+    let privacy_id = privacy_item.id().clone();
 
     let tray: Arc<MacTray> = Arc::new(
         MacTray::new(
@@ -1003,6 +1005,7 @@ fn main() -> Result<()> {
             punc_item,
             edit_db_item,
             set_key_item,
+            privacy_item,
             cfg.debug,
         )
         .map_err(|e| anyhow::anyhow!("Failed to create tray: {}", e))?,
@@ -1044,6 +1047,12 @@ fn main() -> Result<()> {
             if let Ok(exe) = std::env::current_exe() {
                 let _ = std::process::Command::new(exe)
                     .arg("--refine-editor")
+                    .spawn();
+            }
+        } else if event.id == privacy_id {
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = std::process::Command::new(exe)
+                    .arg("--privacy-dialog")
                     .spawn();
             }
         }

@@ -107,6 +107,7 @@ struct RefineEditorApp {
     contribution: i32,
     save_log: bool,
     base_height_set: bool,
+    focus_requested: bool,
 
     tab: Tab,
     error_msg: Option<String>,
@@ -136,6 +137,7 @@ impl RefineEditorApp {
             contribution,
             save_log,
             base_height_set: false,
+            focus_requested: false,
             tab: Tab::Optimize,
             error_msg: None,
             entries: Vec::new(),
@@ -335,6 +337,15 @@ impl RefineEditorApp {
 
 impl eframe::App for RefineEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.focus_requested {
+            self.focus_requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if !ctx.input(|i| i.focused) {
+            ctx.input_mut(|i| i.focused = true);
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
@@ -614,45 +625,57 @@ impl RefineEditorApp {
                         .show(ui, |ui| {
                             for (id, original, is_unrefined) in &display {
                                 let is_selected = self.selected_id == Some(*id);
-                                let frame = egui::Frame::group(ui.style())
-                                    .fill(if is_selected {
-                                        egui::Color32::from_rgb(220, 235, 255)
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    })
-                                    .inner_margin(egui::Margin::same(4))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(egui::RichText::new(original).size(14.0));
-
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    if ui.small_button("删除").clicked() {
-                                                        self.delete_entry(*id);
-                                                    }
-                                                    if !is_unrefined {
-                                                        ui.label(
-                                                            egui::RichText::new("已提交")
-                                                                .color(egui::Color32::from_rgb(
-                                                                    46, 139, 87,
-                                                                ))
-                                                                .size(13.0),
-                                                        );
-                                                    }
-                                                },
-                                            );
-                                        });
-                                    });
-                                let click_resp = ui.interact(
-                                    frame.response.rect,
-                                    frame.response.id.with("click"),
-                                    egui::Sense::click(),
+                                let row_height = 28.0f32;
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), row_height),
+                                    egui::Sense::hover(),
                                 );
-                                if click_resp.clicked() && *is_unrefined {
-                                    self.selected_id = Some(*id);
-                                    self.original_display = original.clone();
-                                    self.edit_text = original.clone();
+                                if is_selected {
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        4.0,
+                                        egui::Color32::from_rgb(220, 235, 255),
+                                    );
+                                }
+                                ui.painter().text(
+                                    egui::pos2(rect.min.x + 6.0, rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    original,
+                                    egui::FontId::proportional(14.0),
+                                    ui.visuals().text_color(),
+                                );
+                                if !is_unrefined {
+                                    ui.painter().text(
+                                        egui::pos2(rect.max.x - 62.0, rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        "已提交",
+                                        egui::FontId::proportional(13.0),
+                                        egui::Color32::from_rgb(46, 139, 87),
+                                    );
+                                }
+                                let btn_w = 40.0f32;
+                                let btn_rect = egui::Rect::from_min_max(
+                                    egui::pos2(rect.max.x - btn_w, rect.min.y),
+                                    rect.max,
+                                );
+                                let btn_resp = ui.put(btn_rect, egui::Button::new("删除").small());
+                                if btn_resp.clicked() {
+                                    self.delete_entry(*id);
+                                } else {
+                                    let left_rect = egui::Rect::from_min_max(
+                                        rect.min,
+                                        egui::pos2(rect.max.x - btn_w, rect.max.y),
+                                    );
+                                    let click_resp = ui.interact(
+                                        left_rect,
+                                        ui.id().with("select").with(*id),
+                                        egui::Sense::click(),
+                                    );
+                                    if click_resp.clicked() && *is_unrefined {
+                                        self.selected_id = Some(*id);
+                                        self.original_display = original.clone();
+                                        self.edit_text = original.clone();
+                                    }
                                 }
                             }
                         });

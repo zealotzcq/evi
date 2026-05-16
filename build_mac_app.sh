@@ -16,4 +16,4 @@ if [ ! -d "$ORT_DIR" ]; then
     curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-arm64-${ORT_VERSION}.tgz" | tar xz -C ort-dylib
 fi
 
-cargo build --release --features "mac" --target aarch64-apple-darwin 2>&1 | tee build.log
+cargo build --release --target aarch64-apple-darwin 2>&1 | tee build.log
