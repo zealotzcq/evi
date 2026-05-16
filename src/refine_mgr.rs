@@ -100,9 +100,9 @@ impl RefineManager {
                     cfg.max_tokens_ratio,
                 );
                 if refined != text {
-                    dr.log_refine(text, &refined);
                     info!("RefineMgr: LlmRemote refined '{}' -> '{}'", text, refined);
                 }
+                dr.log_refine(text, &refined);
                 return refined;
             }
         }
@@ -129,20 +129,23 @@ impl RefineManager {
     }
 
     fn fallback_refine_with_punc(&self, text: &str, dr: &DebugRefine) -> String {
-        let filtered = self.fallback.refine(text, dr);
-        if !ui::get_punc_enabled() {
-            return filtered;
-        }
-        match self.punc.lock().add_punct(&filtered) {
-            Ok(punct_text) => {
-                info!("RefineMgr: punc added: '{}' -> '{}'", filtered, punct_text);
-                punct_text
+        let filtered = self.fallback.refine(text);
+        let result = if !ui::get_punc_enabled() {
+            filtered.clone()
+        } else {
+            match self.punc.lock().add_punct(&filtered) {
+                Ok(punct_text) => {
+                    info!("RefineMgr: punc added: '{}' -> '{}'", filtered, punct_text);
+                    punct_text
+                }
+                Err(e) => {
+                    warn!("RefineMgr: punc failed: {}, using filtered text", e);
+                    filtered.clone()
+                }
             }
-            Err(e) => {
-                warn!("RefineMgr: punc failed: {}, using filtered text", e);
-                filtered
-            }
-        }
+        };
+        dr.log_refine(text, &result);
+        result
     }
 
     fn ensure_trailing_punct(&self, text: &str) -> String {

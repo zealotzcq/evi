@@ -21,7 +21,8 @@ impl DebugRefine {
              CREATE TABLE IF NOT EXISTS refine_log (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  original TEXT NOT NULL,
-                 refined TEXT NOT NULL
+                 refined TEXT NOT NULL,
+                 submitted INTEGER NOT NULL DEFAULT 0
              );
              CREATE TABLE IF NOT EXISTS user (
                  id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -29,6 +30,11 @@ impl DebugRefine {
              );",
         )
         .with_context(|| "Failed to initialize tables")?;
+
+        conn.execute_batch(
+            "ALTER TABLE refine_log ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;",
+        )
+        .ok();
 
         if !DB_INITIALIZED.load(Ordering::SeqCst) {
             let count: i64 = conn
@@ -49,20 +55,20 @@ impl DebugRefine {
         Ok(Self { conn })
     }
 
-    pub fn log_refine(&self, original: &str, _refined: &str) {
+    pub fn log_refine(&self, original: &str, refined: &str) {
         if !crate::ui::get_save_log_enabled() {
             return;
         }
         if original.is_empty() || original.chars().count() <= 10 {
             return;
         }
-        self.insert(original);
+        self.insert(original, refined);
     }
 
-    fn insert(&self, original: &str) {
+    fn insert(&self, original: &str, refined: &str) {
         if let Err(e) = self.conn.execute(
-            "INSERT INTO refine_log (original, refined) VALUES (?1, '')",
-            rusqlite::params![original],
+            "INSERT INTO refine_log (original, refined) VALUES (?1, ?2)",
+            rusqlite::params![original, refined],
         ) {
             warn!("DebugRefine: failed to insert: {}", e);
         }

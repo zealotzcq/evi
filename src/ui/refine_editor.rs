@@ -82,6 +82,7 @@ struct RefineEntry {
     id: i64,
     original: String,
     refined: String,
+    submitted: bool,
 }
 
 enum Tab {
@@ -162,9 +163,9 @@ impl RefineEditorApp {
         let path = crate::models::refine_db_path();
         match rusqlite::Connection::open(&path) {
             Ok(conn) => {
-                let mut stmt = match conn
-                    .prepare("SELECT id, original, refined FROM refine_log ORDER BY id DESC")
-                {
+                let mut stmt = match conn.prepare(
+                    "SELECT id, original, refined, submitted FROM refine_log ORDER BY id DESC",
+                ) {
                     Ok(s) => s,
                     Err(e) => {
                         self.error_msg = Some(format!("查询失败: {}", e));
@@ -176,6 +177,7 @@ impl RefineEditorApp {
                         id: row.get(0)?,
                         original: row.get(1)?,
                         refined: row.get(2)?,
+                        submitted: row.get::<_, i32>(3)? != 0,
                     })
                 });
                 match rows {
@@ -202,24 +204,17 @@ impl RefineEditorApp {
     }
 
     fn display_entries(&self) -> Vec<&RefineEntry> {
-        let mut unrefined: Vec<&RefineEntry> = self
-            .entries
-            .iter()
-            .filter(|e| e.refined.is_empty())
-            .collect();
-        let mut refined: Vec<&RefineEntry> = self
-            .entries
-            .iter()
-            .filter(|e| !e.refined.is_empty())
-            .collect();
+        let mut pending: Vec<&RefineEntry> = self.entries.iter().filter(|e| !e.submitted).collect();
+        let mut submitted: Vec<&RefineEntry> =
+            self.entries.iter().filter(|e| e.submitted).collect();
 
-        unrefined.truncate(MAX_DISPLAY);
-        if unrefined.len() < MAX_DISPLAY {
-            let need = MAX_DISPLAY - unrefined.len();
-            refined.truncate(need);
-            unrefined.extend(refined);
+        pending.truncate(MAX_DISPLAY);
+        if pending.len() < MAX_DISPLAY {
+            let need = MAX_DISPLAY - pending.len();
+            submitted.truncate(need);
+            pending.extend(submitted);
         }
-        unrefined
+        pending
     }
 
     fn delete_entry(&mut self, id: i64) {
@@ -252,7 +247,7 @@ impl RefineEditorApp {
         if let Ok(conn) = rusqlite::Connection::open(&path) {
             if conn
                 .execute(
-                    "UPDATE refine_log SET refined = ?1 WHERE id = ?2",
+                    "UPDATE refine_log SET refined = ?1, submitted = 1 WHERE id = ?2",
                     rusqlite::params![new_refined, id],
                 )
                 .is_ok()
@@ -260,6 +255,7 @@ impl RefineEditorApp {
                 for e in &mut self.entries {
                     if e.id == id {
                         e.refined = new_refined.to_string();
+                        e.submitted = true;
                         break;
                     }
                 }
@@ -537,7 +533,7 @@ impl eframe::App for RefineEditorApp {
                                     .fill(egui::Color32::from_rgb(33, 150, 243))
                                     .show(ui, |ui| {
                                         ui.label(
-                                            egui::RichText::new("📖 使用说明")
+                                            egui::RichText::new("📖 提交成功")
                                                 .size(13.0)
                                                 .color(egui::Color32::WHITE),
                                         );
@@ -588,10 +584,10 @@ impl RefineEditorApp {
             (ui.available_height() * 0.50).max(100.0)
         };
 
-        let display: Vec<(i64, String, bool)> = self
+        let display: Vec<(i64, String, String, bool)> = self
             .display_entries()
             .into_iter()
-            .map(|e| (e.id, e.original.clone(), e.refined.is_empty()))
+            .map(|e| (e.id, e.original.clone(), e.refined.clone(), e.submitted))
             .collect();
 
         egui::Frame::group(ui.style())
@@ -623,7 +619,7 @@ impl RefineEditorApp {
                     egui::ScrollArea::vertical()
                         .max_height(list_h)
                         .show(ui, |ui| {
-                            for (id, original, is_unrefined) in &display {
+                            for (id, original, refined, is_submitted) in &display {
                                 let is_selected = self.selected_id == Some(*id);
                                 let row_height = 28.0f32;
                                 let (rect, _) = ui.allocate_exact_size(
@@ -637,23 +633,51 @@ impl RefineEditorApp {
                                         egui::Color32::from_rgb(220, 235, 255),
                                     );
                                 }
-                                ui.painter().text(
-                                    egui::pos2(rect.min.x + 6.0, rect.center().y),
-                                    egui::Align2::LEFT_CENTER,
-                                    original,
-                                    egui::FontId::proportional(14.0),
-                                    ui.visuals().text_color(),
-                                );
-                                if !is_unrefined {
+                                let btn_w = 40.0f32;
+                                let text_max_x = rect.max.x - btn_w - 4.0;
+                                if *is_submitted {
+                                    let badge_text = "已提交";
+                                    let badge_font = egui::FontId::proportional(12.0);
+                                    let badge_w = ui
+                                        .painter()
+                                        .layout_no_wrap(
+                                            badge_text.to_string(),
+                                            badge_font.clone(),
+                                            egui::Color32::from_rgb(46, 139, 87),
+                                        )
+                                        .size()
+                                        .x
+                                        + 10.0;
+                                    let badge_x = text_max_x - badge_w - 4.0;
+                                    let badge_rect = egui::Rect::from_min_max(
+                                        egui::pos2(badge_x, rect.min.y + 4.0),
+                                        egui::pos2(badge_x + badge_w, rect.max.y - 4.0),
+                                    );
+                                    ui.painter().rect_filled(
+                                        badge_rect,
+                                        4.0,
+                                        egui::Color32::from_rgb(220, 245, 220),
+                                    );
                                     ui.painter().text(
-                                        egui::pos2(rect.max.x - 62.0, rect.center().y),
-                                        egui::Align2::LEFT_CENTER,
-                                        "已提交",
-                                        egui::FontId::proportional(13.0),
+                                        badge_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        badge_text,
+                                        badge_font,
                                         egui::Color32::from_rgb(46, 139, 87),
                                     );
                                 }
-                                let btn_w = 40.0f32;
+                                let display_text = if refined.is_empty() {
+                                    original
+                                } else {
+                                    refined
+                                };
+                                ui.painter().text(
+                                    egui::pos2(rect.min.x + 6.0, rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    display_text,
+                                    egui::FontId::proportional(14.0),
+                                    ui.visuals().text_color(),
+                                );
                                 let btn_rect = egui::Rect::from_min_max(
                                     egui::pos2(rect.max.x - btn_w, rect.min.y),
                                     rect.max,
@@ -671,10 +695,14 @@ impl RefineEditorApp {
                                         ui.id().with("select").with(*id),
                                         egui::Sense::click(),
                                     );
-                                    if click_resp.clicked() && *is_unrefined {
+                                    if click_resp.clicked() && !is_submitted {
                                         self.selected_id = Some(*id);
-                                        self.original_display = original.clone();
-                                        self.edit_text = original.clone();
+                                        self.original_display = if refined.is_empty() {
+                                            original.clone()
+                                        } else {
+                                            refined.clone()
+                                        };
+                                        self.edit_text = self.original_display.clone();
                                     }
                                 }
                             }
