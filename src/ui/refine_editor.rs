@@ -311,6 +311,7 @@ impl RefineEditorApp {
             approved,
         }) {
             Ok(resp) if resp.success => {
+                self.contribution += 1;
                 let idx = std::time::SystemTime::now()
                     .duration_since(std::time::SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
