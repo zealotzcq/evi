@@ -61,7 +61,7 @@ jobs:
         run: cargo build --release
       - name: Build (macOS)
         if: runner.os == 'macOS'
-        run: cargo build --release --features "mac" --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Package ZIP (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
