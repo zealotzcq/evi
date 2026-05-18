@@ -34,11 +34,12 @@ cp "${SCRIPT_DIR}/system_prompt.txt" "${APP_DIR}/Contents/MacOS/"
 # data directory
 mkdir -p "${APP_DIR}/Contents/MacOS/refine_log"
 
-# ORT dylib -> MacOS/ort-dylib/ (only the actual dylib, not .dSYM)
+# ORT dylib -> MacOS/ort-dylib/ (preserve the nested directory structure vi expects)
 ORT_SRC="${SCRIPT_DIR}/ort-dylib/onnxruntime-osx-arm64-1.24.2/lib"
-mkdir -p "${APP_DIR}/Contents/MacOS/ort-dylib"
-cp "${ORT_SRC}/libonnxruntime.1.24.2.dylib" "${APP_DIR}/Contents/MacOS/ort-dylib/"
-ln -sf libonnxruntime.1.24.2.dylib "${APP_DIR}/Contents/MacOS/ort-dylib/libonnxruntime.dylib"
+ORT_DST="${APP_DIR}/Contents/MacOS/ort-dylib/onnxruntime-osx-arm64-1.24.2/lib"
+mkdir -p "${ORT_DST}"
+cp "${ORT_SRC}/libonnxruntime.1.24.2.dylib" "${ORT_DST}/"
+ln -sf libonnxruntime.1.24.2.dylib "${ORT_DST}/libonnxruntime.dylib"
 
 # convert ico to icns for Finder
 ICONSET="${STAGING}/icon.iconset"
