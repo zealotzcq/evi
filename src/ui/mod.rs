@@ -16,14 +16,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-#[cfg(target_os = "windows")]
-pub static HOOK_CHANNEL: parking_lot::Mutex<Option<crossbeam_channel::Sender<bool>>> =
-    parking_lot::Mutex::new(None);
-
-#[cfg(not(target_os = "windows"))]
-pub static HOOK_CHANNEL: std::sync::Mutex<Option<crossbeam_channel::Sender<bool>>> =
-    std::sync::Mutex::new(None);
-
 pub static REFINE_SCHEME: std::sync::LazyLock<parking_lot::RwLock<String>> =
     std::sync::LazyLock::new(|| parking_lot::RwLock::new("default".to_string()));
 
@@ -103,8 +95,6 @@ pub struct ViApp {
     debug: bool,
     #[cfg(target_os = "windows")]
     tray_initialized: bool,
-    #[cfg(target_os = "windows")]
-    ctrl_held: bool,
 }
 
 impl ViApp {
@@ -140,7 +130,6 @@ impl ViApp {
             first_frame: need_rebuild,
             debug,
             tray_initialized: false,
-            ctrl_held: false,
         }
     }
 
@@ -249,17 +238,6 @@ impl eframe::App for ViApp {
                     unsafe {
                         win32::setup_tray(hwnd, self.debug);
                     }
-                }
-            }
-
-            use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-            const VK_RCONTROL: i32 = 0xA3;
-            let rctrl_down = unsafe { GetAsyncKeyState(VK_RCONTROL) } as u16 & 0x8000 != 0;
-
-            if rctrl_down != self.ctrl_held {
-                self.ctrl_held = rctrl_down;
-                if let Some(tx) = HOOK_CHANNEL.lock().as_ref() {
-                    let _ = tx.try_send(rctrl_down);
                 }
             }
         }

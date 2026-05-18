@@ -44,7 +44,12 @@ impl MacTray {
             menu.append_items(&[&set_key_item, &PredefinedMenuItem::separator()])?;
         }
 
-        menu.append_items(&[&edit_db_item, &privacy_item, &PredefinedMenuItem::separator(), &quit_item])?;
+        menu.append_items(&[
+            &edit_db_item,
+            &privacy_item,
+            &PredefinedMenuItem::separator(),
+            &quit_item,
+        ])?;
 
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))

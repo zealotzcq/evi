@@ -541,58 +541,20 @@ fn main() -> Result<()> {
     let cfg = Config::load()?;
 
     let running = Arc::new(AtomicBool::new(true));
-    let ctrl_held = Arc::new(AtomicBool::new(false));
     let needs_rebuild = Arc::new(AtomicBool::new(false));
     let session_holder: Arc<Mutex<Option<Arc<Session>>>> = Arc::new(Mutex::new(None));
 
-    let (ctrl_tx, ctrl_rx) = crossbeam_channel::unbounded::<bool>();
-
     let session_hook = session_holder.clone();
-    let ctrl_held_hook = ctrl_held.clone();
     let running_hook = running.clone();
 
-    vi::ui::HOOK_CHANNEL.lock().replace(ctrl_tx);
-
     std::thread::spawn(move || {
-        use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
         use windows::Win32::UI::WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageW, PeekMessageW, SetWindowsHookExW, TranslateMessage,
-            UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, PM_REMOVE, WH_KEYBOARD_LL, WM_KEYDOWN,
-            WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE, WM_QUIT,
         };
 
-        unsafe extern "system" fn ll_keyboard_proc(
-            code: i32,
-            wparam: WPARAM,
-            lparam: LPARAM,
-        ) -> LRESULT {
-            if code >= 0 {
-                let kb = *(lparam.0 as *const KBDLLHOOKSTRUCT);
-                let vk = kb.vkCode;
-
-                if vk == 0xA3 {
-                    let msg = wparam.0 as u32;
-                    let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-                    let is_up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
-
-                    if is_down && kb.flags.0 & 0x10 == 0 {
-                        if let Some(tx) = vi::ui::HOOK_CHANNEL.lock().as_ref() {
-                            let _ = tx.try_send(true);
-                        }
-                    }
-                    if is_up {
-                        if let Some(tx) = vi::ui::HOOK_CHANNEL.lock().as_ref() {
-                            let _ = tx.try_send(false);
-                        }
-                    }
-                }
-            }
-
-            CallNextHookEx(None, code, wparam, lparam)
-        }
-
-        let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(ll_keyboard_proc), None, 0) }
-            .expect("Failed to install keyboard hook");
+        const VK_RCONTROL: i32 = 0xA3;
+        let mut ctrl_held = false;
 
         let mut msg = MSG::default();
         while running_hook.load(Ordering::SeqCst) {
@@ -606,23 +568,21 @@ fn main() -> Result<()> {
                 }
             }
 
-            while let Ok(pressed) = ctrl_rx.try_recv() {
+            let key_down = unsafe { GetAsyncKeyState(VK_RCONTROL) } as u16 & 0x8000 != 0;
+            if key_down != ctrl_held {
+                ctrl_held = key_down;
                 let sess = session_hook.lock().clone();
-                let Some(sess) = sess else { continue };
-                let was_held = ctrl_held_hook.load(Ordering::SeqCst);
-                if pressed && !was_held {
-                    ctrl_held_hook.store(true, Ordering::SeqCst);
-                    sess.start_recording();
-                } else if !pressed && was_held {
-                    ctrl_held_hook.store(false, Ordering::SeqCst);
-                    sess.stop_recording_and_process();
+                if let Some(sess) = sess {
+                    if key_down {
+                        sess.start_recording();
+                    } else {
+                        sess.stop_recording_and_process();
+                    }
                 }
             }
 
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(30));
         }
-
-        let _ = unsafe { UnhookWindowsHookEx(hook) };
     });
 
     let session_rebuild_holder = session_holder.clone();
